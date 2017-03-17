@@ -14,23 +14,11 @@ namespace FairyGUI
 		/// </summary>
 		public bool showErrorSign;
 
-		/// <summary>
-		/// 
-		/// </summary>
-		public GearAnimation gearAnimation { get; private set; }
-
-		/// <summary>
-		/// 
-		/// </summary>
-		public GearColor gearColor { get; private set; }
-
 		string _url;
 		AlignType _align;
 		VertAlignType _verticalAlign;
 		bool _autoSize;
 		FillType _fill;
-		bool _playing;
-		int _frame;
 		bool _updatingLayout;
 		PackageItem _contentItem;
 		float _contentWidth;
@@ -41,18 +29,14 @@ namespace FairyGUI
 		MovieClip _content;
 		GObject _errorSign;
 
-		static GObjectPool errorSignPool = new GObjectPool();
+		static GObjectPool errorSignPool;
 
 		public GLoader()
 		{
-			_playing = true;
 			_url = string.Empty;
 			_align = AlignType.Left;
 			_verticalAlign = VertAlignType.Top;
 			showErrorSign = true;
-
-			gearAnimation = new GearAnimation(this);
-			gearColor = new GearColor(this);
 		}
 
 		override protected void CreateDisplayObject()
@@ -71,6 +55,8 @@ namespace FairyGUI
 				if (_contentItem == null)
 					FreeExternal(image.texture);
 			}
+			if (_errorSign != null)
+				_errorSign.Dispose();
 			_content.Dispose();
 			base.Dispose();
 		}
@@ -88,7 +74,14 @@ namespace FairyGUI
 
 				_url = value;
 				LoadContent();
+				UpdateGear(7);
 			}
+		}
+
+		override public string icon
+		{
+			get { return _url; }
+			set { this.url = value; }
 		}
 
 		/// <summary>
@@ -160,16 +153,11 @@ namespace FairyGUI
 		/// </summary>
 		public bool playing
 		{
-			get { return _playing; }
+			get { return _content.playing; }
 			set
 			{
-				if (_playing != value)
-				{
-					_playing = value;
-					_content.playing = value;
-					if (gearAnimation.controller != null)
-						gearAnimation.UpdateState();
-				}
+				_content.playing = value;
+				UpdateGear(5);
 			}
 		}
 
@@ -178,13 +166,11 @@ namespace FairyGUI
 		/// </summary>
 		public int frame
 		{
-			get { return _frame; }
+			get { return _content.currentFrame; }
 			set
 			{
-				_frame = value;
 				_content.currentFrame = value;
-				if (gearAnimation.controller != null)
-					gearAnimation.UpdateState();
+				UpdateGear(5);
 			}
 		}
 
@@ -215,9 +201,7 @@ namespace FairyGUI
 			set
 			{
 				_content.color = value;
-
-				if (gearColor.controller != null)
-					gearColor.UpdateState();
+				UpdateGear(4);
 			}
 		}
 
@@ -285,7 +269,7 @@ namespace FairyGUI
 
 			set
 			{
-				ClearContent();
+				this.url = null;
 
 				_content.texture = value;
 				if (value != null)
@@ -342,6 +326,7 @@ namespace FairyGUI
 					_content.texture = _contentItem.texture;
 					_content.scale9Grid = _contentItem.scale9Grid;
 					_content.scaleByTile = _contentItem.scaleByTile;
+					_content.tileGridIndice = _contentItem.tileGridIndice;
 
 					_contentSourceWidth = _contentItem.width;
 					_contentSourceHeight = _contentItem.height;
@@ -356,8 +341,6 @@ namespace FairyGUI
 					_content.swing = _contentItem.swing;
 					_content.repeatDelay = _contentItem.repeatDelay;
 					_content.SetData(_contentItem.texture, _contentItem.frames, new Rect(0, 0, _contentSourceWidth, _contentSourceHeight));
-					_content.playing = _playing;
-					_content.currentFrame = _frame;
 
 					UpdateLayout();
 				}
@@ -386,6 +369,8 @@ namespace FairyGUI
 			_content.texture = texture;
 			_contentSourceWidth = texture.width;
 			_contentSourceHeight = texture.height;
+			_content.scale9Grid = null;
+			_content.scaleByTile = false;
 			UpdateLayout();
 		}
 
@@ -396,13 +381,20 @@ namespace FairyGUI
 
 		private void SetErrorState()
 		{
-			if (!showErrorSign)
+			if (!showErrorSign || !Application.isPlaying)
 				return;
 
 			if (_errorSign == null)
 			{
 				if (UIConfig.loaderErrorSign != null)
+				{
+					if (errorSignPool == null)
+						errorSignPool = new GObjectPool(Stage.inst.CreatePoolManager("LoaderErrorSignPool"));
+
 					_errorSign = errorSignPool.GetObject(UIConfig.loaderErrorSign);
+				}
+				else
+					return;
 			}
 
 			if (_errorSign != null)
@@ -456,14 +448,18 @@ namespace FairyGUI
 			else
 			{
 				float sx = 1, sy = 1;
-				if (_fill == FillType.Scale || _fill == FillType.ScaleFree)
+				if (_fill != FillType.None)
 				{
 					sx = this.width / _contentSourceWidth;
 					sy = this.height / _contentSourceHeight;
 
 					if (sx != 1 || sy != 1)
 					{
-						if (_fill == FillType.Scale)
+						if (_fill == FillType.ScaleMatchHeight)
+							sx = sy;
+						else if (_fill == FillType.ScaleMatchWidth)
+							sy = sx;
+						else if (_fill == FillType.Scale)
 						{
 							if (sx > sy)
 								sx = sy;
@@ -513,19 +509,6 @@ namespace FairyGUI
 			_contentItem = null;
 		}
 
-		/// <summary>
-		/// 
-		/// </summary>
-		/// <param name="c"></param>
-		override public void HandleControllerChanged(Controller c)
-		{
-			base.HandleControllerChanged(c);
-			if (gearAnimation.controller == c)
-				gearAnimation.Apply();
-			if (gearColor.controller == c)
-				gearColor.Apply();
-		}
-
 		override protected void HandleSizeChanged()
 		{
 			base.HandleSizeChanged();
@@ -561,11 +544,14 @@ namespace FairyGUI
 			if (str != null)
 				showErrorSign = str == "true";
 
-			_playing = xml.GetAttributeBool("playing", true);
+			str = xml.GetAttribute("frame");
+			if (str != null)
+				_content.currentFrame = int.Parse(str);
+			_content.playing = xml.GetAttributeBool("playing", true);
 
 			str = xml.GetAttribute("color");
 			if (str != null)
-				this.color = ToolSet.ConvertFromHtmlColor(str);
+				_content.color = ToolSet.ConvertFromHtmlColor(str);
 
 			str = xml.GetAttribute("fillMethod");
 			if (str != null)
@@ -580,19 +566,6 @@ namespace FairyGUI
 
 			if (_url != null)
 				LoadContent();
-		}
-
-		override public void Setup_AfterAdd(XML xml)
-		{
-			base.Setup_AfterAdd(xml);
-
-			XML cxml = xml.GetNode("gearAni");
-			if (cxml != null)
-				gearAnimation.Setup(cxml);
-
-			cxml = xml.GetNode("gearColor");
-			if (cxml != null)
-				gearColor.Setup(cxml);
 		}
 	}
 }

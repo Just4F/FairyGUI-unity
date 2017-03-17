@@ -145,42 +145,9 @@ namespace FairyGUI
 			this.sortingOrder = value;
 			container._panelOrder = value;
 
-			if (!apply)
-				return;
-
-			int numChildren = Stage.inst.numChildren;
-			int i = 0;
-			int j;
-			int curIndex = -1;
-			for (; i < numChildren; i++)
-			{
-				DisplayObject obj = Stage.inst.GetChildAt(i);
-				if (obj == this.container)
-				{
-					curIndex = i;
-					continue;
-				}
-
-				if (obj == GRoot.inst.displayObject)
-					j = 1000;
-				else if (obj is Container)
-					j = ((Container)obj)._panelOrder;
-				else
-					continue;
-
-				if (sortingOrder <= j)
-				{
-					if (curIndex != -1)
-						Stage.inst.AddChildAt(this.container, i - 1);
-					else
-						Stage.inst.AddChildAt(this.container, i);
-					break;
-				}
-			}
-			if (i == numChildren)
-				Stage.inst.AddChild(this.container);
+			if (apply)
+				Stage.inst.ApplyPanelOrder(container);
 		}
-
 
 		/// <summary>
 		/// 
@@ -265,15 +232,9 @@ namespace FairyGUI
 				return;
 
 			_captured = true;
-			GameObject tempGo = new GameObject("Temp Object");
-			tempGo.layer = CaptureCamera.layer;
 
-			UIObjectFactory.packageItemExtensions.Clear();
-			UIObjectFactory.loaderConstructor = null;
 			DisplayOptions.SetEditModeHideFlags();
-			DisplayOptions.defaultRoot = new Transform[] { tempGo.transform };
 			GComponent view = (GComponent)UIPackage.CreateObject(packageName, componentName);
-			DisplayOptions.defaultRoot = null;
 
 			if (view != null)
 			{
@@ -321,7 +282,6 @@ namespace FairyGUI
 				camera.targetTexture = null;
 				view.Dispose();
 				GameObject.DestroyImmediate(cameraObject);
-				GameObject.DestroyImmediate(tempGo);
 
 				if (_renderer != null)
 					_renderer.sharedMaterial.mainTexture = _texture;

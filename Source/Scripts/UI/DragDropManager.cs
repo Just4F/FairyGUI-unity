@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Collections.Generic;
-using FairyGUI;
 using UnityEngine;
 
 namespace FairyGUI
@@ -29,9 +28,12 @@ namespace FairyGUI
 		public DragDropManager()
 		{
 			_agent = (GLoader)UIObjectFactory.NewObject("loader");
+			_agent.gameObjectName = "DragDropAgent";
+			_agent.SetHome(GRoot.inst);
 			_agent.touchable = false;//important
 			_agent.draggable = true;
 			_agent.SetSize(100, 100);
+			_agent.SetPivot(0.5f, 0.5f, true);
 			_agent.align = AlignType.Center;
 			_agent.verticalAlign = VertAlignType.Middle;
 			_agent.sortingOrder = int.MaxValue;
@@ -72,7 +74,7 @@ namespace FairyGUI
 			_sourceData = sourceData;
 			_agent.url = icon;
 			GRoot.inst.AddChild(_agent);
-			_agent.xy = source.LocalToRoot(Vector2.zero, null);
+			_agent.xy = GRoot.inst.GlobalToLocal(Stage.inst.GetTouchPosition(touchPointID));
 			_agent.StartDrag(touchPointID);
 		}
 

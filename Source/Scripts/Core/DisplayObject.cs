@@ -8,28 +8,104 @@ namespace FairyGUI
 	/// </summary>
 	public class DisplayObject : EventDispatcher
 	{
+		/// <summary>
+		/// 
+		/// </summary>
 		public string name;
-		public Container parent { get; internal set; }
+
+		/// <summary>
+		/// 
+		/// </summary>
+		public Container parent { get; private set; }
+
+		/// <summary>
+		/// 
+		/// </summary>
 		public GameObject gameObject { get; protected set; }
+
+		/// <summary>
+		/// 
+		/// </summary>
 		public Transform cachedTransform { get; protected set; }
+
+		/// <summary>
+		/// 
+		/// </summary>
 		public NGraphics graphics { get; protected set; }
 
+		/// <summary>
+		/// 
+		/// </summary>
 		public NGraphics paintingGraphics { get; protected set; }
+
+		/// <summary>
+		/// 
+		/// </summary>
 		public EventCallback0 onPaint;
 
+		/// <summary>
+		/// 
+		/// </summary>
 		public GObject gOwner;
+
+		/// <summary>
+		/// 
+		/// </summary>
 		public uint id;
 
+		/// <summary>
+		/// 
+		/// </summary>
 		public EventListener onClick { get; private set; }
+
+		/// <summary>
+		/// 
+		/// </summary>
 		public EventListener onRightClick { get; private set; }
+
+		/// <summary>
+		/// 
+		/// </summary>
 		public EventListener onTouchBegin { get; private set; }
+
+		/// <summary>
+		/// 
+		/// </summary>
 		public EventListener onTouchEnd { get; private set; }
+
+		/// <summary>
+		/// 
+		/// </summary>
 		public EventListener onRollOver { get; private set; }
+
+		/// <summary>
+		/// 
+		/// </summary>
 		public EventListener onRollOut { get; private set; }
+
+		/// <summary>
+		/// 
+		/// </summary>
 		public EventListener onMouseWheel { get; private set; }
+
+		/// <summary>
+		/// 
+		/// </summary>
 		public EventListener onAddedToStage { get; private set; }
+
+		/// <summary>
+		/// 
+		/// </summary>
 		public EventListener onRemovedFromStage { get; private set; }
+
+		/// <summary>
+		/// 
+		/// </summary>
 		public EventListener onKeyDown { get; private set; }
+
+		/// <summary>
+		/// 
+		/// </summary>
 		public EventListener onClickLink { get; private set; }
 
 		bool _visible;
@@ -42,26 +118,28 @@ namespace FairyGUI
 		bool _grayed;
 		BlendMode _blendMode;
 		IFilter _filter;
-		bool _disposed;
+		Transform _home;
 
 		bool _perspective;
 		int _focalLength;
-		Vector3 _rotation;
+		Vector3 _rotation; //由于万向锁，单独旋转一个轴是会影响到其他轴的，所以这里需要单独保存
 
 		protected EventCallback0 _captureDelegate; //缓存这个delegate，可以防止Capture状态下每帧104B的GC
-		//painting mode
-		protected int _paintingMode; //1-滤镜，2-blendMode，3-transformMatrix
+		protected int _paintingMode; //1-滤镜，2-blendMode，4-transformMatrix, 8-cacheAsBitmap
 		protected Margin _paintingMargin;
 		protected int _paintingFlag;
+		protected bool _cacheAsBitmap;
 
 		protected Rect _contentRect;
-		internal Vector2 _positionOffset;
 		protected bool _requireUpdateMesh;
 		protected Matrix4x4? _transformMatrix;
+		protected bool _ownsGameObject;
 
-		internal protected bool _optimizeNotTouchable;
-		internal Rect _internal_bounds;
+		internal bool _disposed;
+		internal protected bool _touchDisabled;
+		internal float[] _internal_bounds;
 		internal protected bool _skipInFairyBatching;
+		internal bool _outlineChanged;
 
 		internal static uint _gInstanceCounter;
 
@@ -74,6 +152,8 @@ namespace FairyGUI
 			_blendMode = BlendMode.Normal;
 			_focalLength = 2000;
 			_captureDelegate = Capture;
+			_outlineChanged = true;
+			_internal_bounds = new float[4];
 
 			onClick = new EventListener(this, "onClick");
 			onRightClick = new EventListener(this, "onRightClick");
@@ -88,21 +168,28 @@ namespace FairyGUI
 			onClickLink = new EventListener(this, "onClickLink");
 		}
 
-		virtual protected void CreateGameObject(string gameObjectName)
+		protected void CreateGameObject(string gameObjectName)
 		{
 			gameObject = new GameObject(gameObjectName);
 			cachedTransform = gameObject.transform;
-			if (DisplayOptions.defaultRoot != null)
-				FairyGUI.Utils.ToolSet.SetParent(cachedTransform, DisplayOptions.defaultRoot[0]);
-			else
+			if (Application.isPlaying)
 				Object.DontDestroyOnLoad(gameObject);
-			gameObject.hideFlags = DisplayOptions.hideFlags | HideFlags.HideInHierarchy;
+			gameObject.hideFlags = DisplayOptions.hideFlags;
 			gameObject.SetActive(false);
+			_ownsGameObject = true;
 		}
 
-		virtual protected void DestroyGameObject()
+		protected void SetGameObject(GameObject gameObject)
 		{
-			if (gameObject != null)
+			this.gameObject = gameObject;
+			this.cachedTransform = gameObject.transform;
+			_rotation = cachedTransform.localEulerAngles;
+			_ownsGameObject = false;
+		}
+
+		protected void DestroyGameObject()
+		{
+			if (_ownsGameObject && gameObject != null)
 			{
 				if (Application.isPlaying)
 					GameObject.Destroy(gameObject);
@@ -158,12 +245,13 @@ namespace FairyGUI
 		/// </summary>
 		public float x
 		{
-			get { return cachedTransform.localPosition.x + _positionOffset.x; }
+			get { return cachedTransform.localPosition.x; }
 			set
 			{
 				Vector3 v = cachedTransform.localPosition;
-				v.x = value - _positionOffset.x;
+				v.x = value;
 				cachedTransform.localPosition = v;
+				_outlineChanged = true;
 			}
 		}
 
@@ -172,12 +260,13 @@ namespace FairyGUI
 		/// </summary>
 		public float y
 		{
-			get { return -cachedTransform.localPosition.y + _positionOffset.y; }
+			get { return -cachedTransform.localPosition.y; }
 			set
 			{
 				Vector3 v = cachedTransform.localPosition;
-				v.y = -value + _positionOffset.y;
+				v.y = -value;
 				cachedTransform.localPosition = v;
+				_outlineChanged = true;
 			}
 		}
 
@@ -192,6 +281,7 @@ namespace FairyGUI
 				Vector3 v = cachedTransform.localPosition;
 				v.z = value;
 				cachedTransform.localPosition = v;
+				_outlineChanged = true;
 			}
 		}
 
@@ -232,19 +322,11 @@ namespace FairyGUI
 		public void SetPosition(float xv, float yv, float zv)
 		{
 			Vector3 v = cachedTransform.localPosition;
-			v.x = xv - _positionOffset.x;
-			v.y = -yv + _positionOffset.y;
+			v.x = xv;
+			v.y = -yv;
 			v.z = zv;
 			cachedTransform.localPosition = v;
-		}
-
-		virtual protected void SetPositionOffset(Vector2 value)
-		{
-			Vector3 v = cachedTransform.localPosition;
-			v.x += (_positionOffset.x - value.x);
-			v.y += value.y - _positionOffset.y;
-			cachedTransform.localPosition = v;
-			_positionOffset = value;
+			_outlineChanged = true;
 		}
 
 		/// <summary>
@@ -252,7 +334,11 @@ namespace FairyGUI
 		/// </summary>
 		public float width
 		{
-			get { return _contentRect.width; }
+			get
+			{
+				EnsureSizeCorrect();
+				return _contentRect.width;
+			}
 			set
 			{
 				if (!Mathf.Approximately(value, _contentRect.width))
@@ -268,7 +354,11 @@ namespace FairyGUI
 		/// </summary>
 		public float height
 		{
-			get { return _contentRect.height; }
+			get
+			{
+				EnsureSizeCorrect();
+				return _contentRect.height;
+			}
 			set
 			{
 				if (!Mathf.Approximately(value, _contentRect.height))
@@ -284,8 +374,15 @@ namespace FairyGUI
 		/// </summary>
 		public Vector2 size
 		{
-			get { return _contentRect.size; }
-			set { SetSize(value.x, value.y); }
+			get
+			{
+				EnsureSizeCorrect();
+				return _contentRect.size;
+			}
+			set
+			{
+				SetSize(value.x, value.y);
+			}
 		}
 
 		/// <summary>
@@ -306,12 +403,17 @@ namespace FairyGUI
 			}
 		}
 
+		virtual public void EnsureSizeCorrect()
+		{
+		}
+
 		virtual protected void OnSizeChanged(bool widthChanged, bool heightChanged)
 		{
 			ApplyPivot();
 			_paintingFlag = 1;
 			if (graphics != null)
 				_requireUpdateMesh = true;
+			_outlineChanged = true;
 		}
 
 		/// <summary>
@@ -323,9 +425,9 @@ namespace FairyGUI
 			set
 			{
 				Vector3 v = cachedTransform.localScale;
-				v.x = value;
-				v.z = value;
+				v.x = v.z = ValidateScale(value);
 				cachedTransform.localScale = v;
+				_outlineChanged = true;
 				ApplyPivot();
 			}
 		}
@@ -339,8 +441,9 @@ namespace FairyGUI
 			set
 			{
 				Vector3 v = cachedTransform.localScale;
-				v.y = value;
+				v.y = ValidateScale(value);
 				cachedTransform.localScale = v;
+				_outlineChanged = true;
 				ApplyPivot();
 			}
 		}
@@ -353,11 +456,28 @@ namespace FairyGUI
 		public void SetScale(float xv, float yv)
 		{
 			Vector3 v = cachedTransform.localScale;
-			v.x = xv;
-			v.y = yv;
-			v.z = xv;
+			v.x = v.z = ValidateScale(xv);
+			v.y = ValidateScale(yv);
 			cachedTransform.localScale = v;
+			_outlineChanged = true;
 			ApplyPivot();
+		}
+
+		/// <summary>
+		/// 在scale过小情况（极端情况=0），当使用Transform的坐标变换时，变换到世界，再从世界变换到本地，会由于精度问题造成结果错误。
+		/// 这种错误会导致Batching错误，因为Batching会使用缓存的outline。
+		/// 这里限制一下scale的最小值作为当前解决方案。
+		/// 这个方案并不完美，因为限制了本地scale值并不能保证对世界scale不会过小。
+		/// </summary>
+		/// <param name="value"></param>
+		/// <returns></returns>
+		private float ValidateScale(float value)
+		{
+			if (value >= 0 && value < 0.001f)
+				value = 0.001f;
+			else if (value < 0 && value > -0.001f)
+				value = -0.001f;
+			return value;
 		}
 
 		/// <summary>
@@ -380,23 +500,17 @@ namespace FairyGUI
 			get
 			{
 				//和Unity默认的旋转方向相反
-				if (_perspective)
-					return -_rotation.z;
-				else
-					return -cachedTransform.localEulerAngles.z;
+				return -_rotation.z;
 			}
 			set
 			{
+				_rotation.z = -value;
+				_outlineChanged = true;
 				if (_perspective)
-				{
-					_rotation.z = -value;
 					UpdateTransformMatrix();
-				}
 				else
 				{
-					Vector3 v = cachedTransform.localEulerAngles;
-					v.z = -value;
-					cachedTransform.localEulerAngles = v;
+					cachedTransform.localEulerAngles = _rotation;
 					ApplyPivot();
 				}
 			}
@@ -409,23 +523,17 @@ namespace FairyGUI
 		{
 			get
 			{
-				if (_perspective)
-					return _rotation.x;
-				else
-					return cachedTransform.localEulerAngles.x;
+				return _rotation.x;
 			}
 			set
 			{
+				_rotation.x = value;
+				_outlineChanged = true;
 				if (_perspective)
-				{
-					_rotation.x = value;
 					UpdateTransformMatrix();
-				}
 				else
 				{
-					Vector3 v = cachedTransform.localEulerAngles;
-					v.x = value;
-					cachedTransform.localEulerAngles = v;
+					cachedTransform.localEulerAngles = _rotation;
 					ApplyPivot();
 				}
 			}
@@ -438,23 +546,17 @@ namespace FairyGUI
 		{
 			get
 			{
-				if (_perspective)
-					return _rotation.y;
-				else
-					return cachedTransform.localEulerAngles.y;
+				return _rotation.y;
 			}
 			set
 			{
+				_rotation.y = value;
+				_outlineChanged = true;
 				if (_perspective)
-				{
-					_rotation.y = value;
 					UpdateTransformMatrix();
-				}
 				else
 				{
-					Vector3 v = cachedTransform.localEulerAngles;
-					v.y = value;
-					cachedTransform.localEulerAngles = v;
+					cachedTransform.localEulerAngles = _rotation;
 					ApplyPivot();
 				}
 			}
@@ -469,6 +571,7 @@ namespace FairyGUI
 			set
 			{
 				_skew = value;
+				_outlineChanged = true;
 				UpdateTransformMatrix();
 			}
 		}
@@ -487,12 +590,8 @@ namespace FairyGUI
 				if (_perspective != value)
 				{
 					_perspective = value;
-					if (_perspective)
-					{
-						//屏蔽Unity自身的旋转变换
-						_rotation = cachedTransform.localEulerAngles;
+					if (_perspective)//屏蔽Unity自身的旋转变换
 						cachedTransform.localEulerAngles = Vector3.zero;
-					}
 					else
 						cachedTransform.localEulerAngles = _rotation;
 
@@ -539,12 +638,12 @@ namespace FairyGUI
 			if (_transformMatrix != null)
 			{
 				if (this is Container)
-					this.EnterPaintingMode(3, null);
+					this.EnterPaintingMode(4, null);
 			}
 			else
 			{
 				if (this is Container)
-					this.LeavePaintingMode(3);
+					this.LeavePaintingMode(4);
 			}
 
 			if (this._paintingMode > 0)
@@ -559,6 +658,8 @@ namespace FairyGUI
 				this.graphics.vertexMatrix = _transformMatrix;
 				_requireUpdateMesh = true;
 			}
+
+			_outlineChanged = true;
 		}
 
 		/// <summary>
@@ -577,6 +678,7 @@ namespace FairyGUI
 				Vector3 v = cachedTransform.localPosition;
 				v += oldOffset - _pivotOffset + deltaPivot;
 				cachedTransform.localPosition = v;
+				_outlineChanged = true;
 
 				if (_transformMatrix != null)
 					UpdateTransformMatrix();
@@ -603,6 +705,7 @@ namespace FairyGUI
 				Vector3 v = cachedTransform.localPosition;
 				v += oldOffset - _pivotOffset;
 				cachedTransform.localPosition = v;
+				_outlineChanged = true;
 			}
 		}
 
@@ -709,15 +812,21 @@ namespace FairyGUI
 		/// </summary>
 		public bool isDisposed
 		{
-			get { return gameObject == null; }
+			get { return _disposed || gameObject == null; }
 		}
 
-		protected internal void SetParent(Container value)
+		internal void InternalSetParent(Container value)
 		{
 			if (parent != value)
 			{
-				parent = value;
-				UpdateHierarchy();
+				if (value == null && parent._disposed)
+					parent = value;
+				else
+				{
+					parent = value;
+					UpdateHierarchy();
+				}
+				_outlineChanged = true;
 			}
 		}
 
@@ -799,7 +908,7 @@ namespace FairyGUI
 					{
 						GameObject go = new GameObject(this.gameObject.name + " (Painter)");
 						go.layer = this.gameObject.layer;
-						FairyGUI.Utils.ToolSet.SetParent(go.transform, cachedTransform);
+						ToolSet.SetParent(go.transform, cachedTransform);
 						go.hideFlags = DisplayOptions.hideFlags;
 						paintingGraphics = new NGraphics(go);
 					}
@@ -860,6 +969,24 @@ namespace FairyGUI
 		public bool paintingMode
 		{
 			get { return _paintingMode > 0; }
+		}
+
+		/// <summary>
+		/// 将整个显示对象（如果是容器，则容器包含的整个显示列表）静态化，所有内容被缓冲到一张纹理上。
+		/// DC将保持为1。CPU消耗将降到最低。但对象的任何变化不会更新。
+		/// 当cacheAsBitmap已经为true时，再次调用cacheAsBitmap=true将会刷新一次。
+		/// </summary>
+		public bool cacheAsBitmap
+		{
+			get { return _cacheAsBitmap; }
+			set
+			{
+				_cacheAsBitmap = value;
+				if (value)
+					EnterPaintingMode(8, null);
+				else
+					LeavePaintingMode(8);
+			}
 		}
 
 		/// <summary>
@@ -928,11 +1055,13 @@ namespace FairyGUI
 		/// <returns></returns>
 		virtual public Rect GetBounds(DisplayObject targetSpace)
 		{
+			EnsureSizeCorrect();
+
 			if (targetSpace == this || _contentRect.width == 0 || _contentRect.height == 0) // optimization
 			{
 				return _contentRect;
 			}
-			else if (targetSpace == parent && this.rotation == 0)
+			else if (targetSpace == parent && _rotation.z == 0)
 			{
 				float sx = this.scaleX;
 				float sy = this.scaleY;
@@ -944,7 +1073,7 @@ namespace FairyGUI
 
 		protected internal DisplayObject InternalHitTest()
 		{
-			if (!_visible || (HitTestContext.forTouch && (!_touchable || _optimizeNotTouchable)))
+			if (!_visible || (HitTestContext.forTouch && (!_touchable || _touchDisabled)))
 				return null;
 
 			return HitTest();
@@ -1028,8 +1157,8 @@ namespace FairyGUI
 			Vector3 worldPoint = this.cachedTransform.TransformPoint(point.x, -point.y, 0);
 			if (wsc != null)
 			{
-				if (wsc.hitArea is MeshColliderHitTest)
-					Debug.LogError("Not supported for UIPainter, use TransfromPoint instead.");
+				if (wsc.hitArea is MeshColliderHitTest) //Not supported for UIPainter, use TransfromPoint instead.
+					return new Vector2(float.NaN, float.NaN);
 
 				Vector3 screePoint = wsc.GetRenderCamera().WorldToScreenPoint(worldPoint);
 				return new Vector2(screePoint.x, Stage.inst.stageHeight - screePoint.y);
@@ -1085,8 +1214,6 @@ namespace FairyGUI
 				HitTestContext.worldPoint = this.cachedTransform.TransformPoint(localPoint);
 			}
 			localPoint.y = -localPoint.y;
-			localPoint.x -= this._positionOffset.x;
-			localPoint.y -= this._positionOffset.y;
 
 			return localPoint;
 		}
@@ -1108,8 +1235,6 @@ namespace FairyGUI
 			{
 				v = targetSpace.cachedTransform.InverseTransformPoint(v);
 				v.y = -v.y;
-				v.x -= targetSpace._positionOffset.x;
-				v.y -= targetSpace._positionOffset.y;
 			}
 			return v;
 		}
@@ -1125,7 +1250,7 @@ namespace FairyGUI
 			if (targetSpace == this)
 				return rect;
 
-			if (targetSpace == parent && rotation == 0f) // optimization
+			if (targetSpace == parent && _rotation.z == 0) // optimization
 			{
 				Vector3 vec = cachedTransform.localScale;
 				return new Rect((this.x + rect.x) * vec.x, (this.y + rect.y) * vec.y,
@@ -1146,15 +1271,11 @@ namespace FairyGUI
 
 		protected void TransformRectPoint(float px, float py, DisplayObject targetSpace, ref Rect rect)
 		{
-			px += _positionOffset.x;
-			py += _positionOffset.y;
 			Vector2 v = this.cachedTransform.TransformPoint(px, -py, 0);
 			if (targetSpace != null)
 			{
 				v = targetSpace.cachedTransform.InverseTransformPoint(v);
 				v.y = -v.y;
-				v.x -= targetSpace._positionOffset.x;
-				v.y -= targetSpace._positionOffset.y;
 			}
 			if (rect.xMin > v.x) rect.xMin = v.x;
 			if (rect.xMax < v.x) rect.xMax = v.x;
@@ -1238,7 +1359,8 @@ namespace FairyGUI
 				{
 					paintingTexture.lastActive = Time.time;
 
-					if (!(this is Container)) //如果是容器，这句移到Container.Update的最后执行，因为容器中可能也有需要Capture的内容，要等他们完成后再进行容器的Capture。
+					if (!(this is Container) //如果是容器，这句移到Container.Update的最后执行，因为容器中可能也有需要Capture的内容，要等他们完成后再进行容器的Capture。
+						&& (_paintingFlag != 2 || !_cacheAsBitmap))
 						UpdateContext.OnEnd += _captureDelegate;
 				}
 
@@ -1248,7 +1370,7 @@ namespace FairyGUI
 			if (_filter != null)
 				_filter.Update();
 
-			context.counter++;
+			Stats.ObjectCount++;
 		}
 
 		void Capture()
@@ -1261,24 +1383,37 @@ namespace FairyGUI
 				onPaint();
 		}
 
-		virtual protected void UpdateHierarchy()
+		/// <summary>
+		/// 为对象设置一个默认的父Transform。当对象不在显示列表里时，它的GameObject挂到哪里。
+		/// </summary>
+		public Transform home
 		{
-			if (parent != null)
+			get { return _home; }
+			set
 			{
-#if (UNITY_4_6 || UNITY_4_7 || UNITY_5)
-				cachedTransform.SetParent(parent.cachedTransform, false);
-#else
-				Vector3 v1 = cachedTransform.localPosition;
-				Vector3 v2 = cachedTransform.localScale;
-				Vector3 v3 = cachedTransform.localEulerAngles;
+				_home = value;
+				if ((object)value != null && (object)cachedTransform.parent == null)
+					ToolSet.SetParent(cachedTransform, value);
+			}
+		}
 
-				cachedTransform.parent = parent.cachedTransform;
+		void UpdateHierarchy()
+		{
+			if (!_ownsGameObject)
+			{
+				if (gameObject != null)
+				{
+					//we dont change transform parent of this object
+					if (parent != null && visible)
+						gameObject.SetActive(true);
+					else
+						gameObject.SetActive(false);
+				}
+			}
+			else if (parent != null)
+			{
+				ToolSet.SetParent(cachedTransform, parent.cachedTransform);
 
-				cachedTransform.localPosition = v1;
-				cachedTransform.localScale = v2;
-				cachedTransform.localEulerAngles = v3;
-#endif
-				gameObject.hideFlags = DisplayOptions.hideFlags;
 				if (_visible)
 					gameObject.SetActive(true);
 
@@ -1291,17 +1426,18 @@ namespace FairyGUI
 
 				this.layer = layerValue;
 			}
-			else if (!_disposed)
+			else if (!_disposed && this.gameObject != null && !StageEngine.beingQuit)
 			{
 				if (Application.isPlaying)
 				{
-#if (UNITY_4_6 || UNITY_4_7 || UNITY_5)
-					cachedTransform.SetParent(null, false);
-#else
-					cachedTransform.parent = null;
-#endif
+					if (gOwner == null || gOwner.parent == null)//如果gOwner还有parent的话，说明只是暂时的隐藏
+					{
+						ToolSet.SetParent(cachedTransform, _home);
+						if (_home == null)
+							Object.DontDestroyOnLoad(this.gameObject);
+					}
 				}
-				gameObject.hideFlags |= HideFlags.HideInHierarchy;
+
 				gameObject.SetActive(false);
 			}
 		}

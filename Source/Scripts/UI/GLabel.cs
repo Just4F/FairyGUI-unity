@@ -6,7 +6,7 @@ namespace FairyGUI
 	/// <summary>
 	/// GLabel class.
 	/// </summary>
-	public class GLabel : GComponent
+	public class GLabel : GComponent, IColorGear
 	{
 		protected GObject _titleObject;
 		protected GObject _iconObject;
@@ -18,28 +18,21 @@ namespace FairyGUI
 		/// <summary>
 		/// Icon of the label.
 		/// </summary>
-		public string icon
+		override public string icon
 		{
 			get
 			{
-				if (_iconObject is GLoader)
-					return ((GLoader)_iconObject).url;
-				else if (_iconObject is GLabel)
-					return ((GLabel)_iconObject).icon;
-				else if (_iconObject is GButton)
-					return ((GButton)_iconObject).icon;
+				if (_iconObject != null)
+					return _iconObject.icon;
 				else
 					return null;
 			}
 
 			set
 			{
-				if (_iconObject is GLoader)
-					((GLoader)_iconObject).url = value;
-				else if (_iconObject is GLabel)
-					((GLabel)_iconObject).icon = value;
-				else if (_iconObject is GButton)
-					((GButton)_iconObject).icon = value;
+				if (_iconObject != null)
+					_iconObject.icon = value;
+				UpdateGear(7);
 			}
 		}
 
@@ -59,6 +52,7 @@ namespace FairyGUI
 			{
 				if (_titleObject != null)
 					_titleObject.text = value;
+				UpdateGear(6);
 			}
 		}
 
@@ -118,6 +112,47 @@ namespace FairyGUI
 			}
 		}
 
+		public int titleFontSize
+		{
+			get
+			{
+				if (_titleObject is GTextField)
+					return ((GTextField)_titleObject).textFormat.size;
+				else if (_titleObject is GLabel)
+					return ((GLabel)_titleObject).titleFontSize;
+				else if (_titleObject is GButton)
+					return ((GButton)_titleObject).titleFontSize;
+				else
+					return 0;
+			}
+			set
+			{
+				if (_titleObject is GTextField)
+				{
+					TextFormat tf = ((GTextField)_titleObject).textFormat;
+					tf.size = value;
+					((GTextField)_titleObject).textFormat = tf;
+				}
+				else if (_titleObject is GLabel)
+					((GLabel)_titleObject).titleFontSize = value;
+				else if (_titleObject is GButton)
+					((GButton)_titleObject).titleFontSize = value;
+			}
+		}
+
+		/// <summary>
+		/// 
+		/// </summary>
+		public Color color
+		{
+			get { return this.titleColor; }
+			set
+			{
+				this.titleColor = value;
+				UpdateGear(4);
+			}
+		}
+
 		override public void ConstructFromXML(XML cxml)
 		{
 			base.ConstructFromXML(cxml);
@@ -144,11 +179,14 @@ namespace FairyGUI
 			str = xml.GetAttribute("titleColor");
 			if (str != null)
 				this.titleColor = ToolSet.ConvertFromHtmlColor(str);
+			str = xml.GetAttribute("titleFontSize");
+			if (str != null)
+				this.titleFontSize = int.Parse(str);
 
 			if (_titleObject is GTextInput)
 			{
 				GTextInput input = ((GTextInput)_titleObject);
-				str = xml.GetAttribute("promptText");
+				str = xml.GetAttribute("prompt");
 				if (str != null)
 					input.promptText = str;
 
@@ -158,6 +196,7 @@ namespace FairyGUI
 
 				input.maxLength = xml.GetAttributeInt("maxLength", input.maxLength);
 				input.keyboardType = xml.GetAttributeInt("keyboardType", input.keyboardType);
+				input.displayAsPassword = xml.GetAttributeBool("password", input.displayAsPassword);
 			}
 		}
 	}

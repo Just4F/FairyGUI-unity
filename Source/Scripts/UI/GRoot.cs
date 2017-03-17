@@ -37,10 +37,8 @@ namespace FairyGUI
 
 		public GRoot()
 		{
-			this.name = "GRoot";
-			this.rootContainer.gameObject.name = "GRoot";
+			this.name = this.rootContainer.name = this.rootContainer.gameObject.name = "GRoot";
 			this.opaque = false;
-			ApplyContentScaleFactor();
 
 			_popupStack = new List<GObject>();
 			_justClosedPopups = new List<GObject>();
@@ -91,16 +89,6 @@ namespace FairyGUI
 		public void ShowWindow(Window win)
 		{
 			AddChild(win);
-
-			if (win.x > this.width)
-				win.x = this.width - win.width;
-			else if (win.x + win.width < 0)
-				win.x = 0;
-			if (win.y > this.height)
-				win.y = this.height - win.height;
-			else if (win.y + win.height < 0)
-				win.y = 0;
-
 			AdjustModalLayer();
 		}
 
@@ -176,7 +164,10 @@ namespace FairyGUI
 			if (UIConfig.globalModalWaiting != null)
 			{
 				if (_modalWaitPane == null)
+				{
 					_modalWaitPane = UIPackage.CreateObjectFromURL(UIConfig.globalModalWaiting);
+					_modalWaitPane.SetHome(this);
+				}
 				_modalWaitPane.SetSize(this.width, this.height);
 				_modalWaitPane.AddRelation(this, RelationType.Size);
 
@@ -292,10 +283,11 @@ namespace FairyGUI
 				_modalLayer = new GGraph();
 				_modalLayer.DrawRect(this.width, this.height, 0, Color.white, UIConfig.modalLayerColor);
 				_modalLayer.AddRelation(this, RelationType.Size);
+				_modalLayer.gameObjectName = "ModalLayer";
+				_modalLayer.SetHome(this);
 			}
 
 			int cnt = this.numChildren;
-			bool modalLayerIsTop = false;
 
 			if (_modalWaitPane != null && _modalWaitPane.parent != null)
 				SetChildIndex(_modalWaitPane, cnt - 1);
@@ -303,21 +295,12 @@ namespace FairyGUI
 			for (int i = cnt - 1; i >= 0; i--)
 			{
 				GObject g = this.GetChildAt(i);
-				if (g == _modalLayer)
-					modalLayerIsTop = true;
-				else if ((g is Window) && (g as Window).modal)
+				if ((g is Window) && (g as Window).modal)
 				{
 					if (_modalLayer.parent == null)
 						AddChildAt(_modalLayer, i);
-					else if (i > 0)
-					{
-						if (modalLayerIsTop)
-							SetChildIndex(_modalLayer, i);
-						else
-							SetChildIndex(_modalLayer, i - 1);
-					}
 					else
-						AddChildAt(_modalLayer, 0);
+						SetChildIndexBefore(_modalLayer, i);
 					return;
 				}
 			}
@@ -526,6 +509,7 @@ namespace FairyGUI
 				}
 
 				_defaultTooltipWin = UIPackage.CreateObjectFromURL(resourceURL);
+				_defaultTooltipWin.SetHome(this);
 				_defaultTooltipWin.touchable = false;
 			}
 

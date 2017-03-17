@@ -7,31 +7,52 @@ namespace FairyGUI
 	/// </summary>
 	public class PlayState
 	{
-		public bool reachEnding { get; private set; } //是否已播放到结尾
-		public bool reversed { get; private set; } //是否已反向播放
-		public int repeatedCount { get; private set; } //重复次数
-		public bool ignoreTimeScale; //是否忽略TimeScale的影响，即在TimeScale改变后依然保持原有的播放速度
+		/// <summary>
+		/// 是否已播放到结尾
+		/// </summary>
+		public bool reachEnding { get; private set; }
+
+		/// <summary>
+		/// 是否已反向播放
+		/// </summary>
+		public bool reversed { get; private set; }
+
+		/// <summary>
+		/// 重复次数
+		/// </summary>
+		public int repeatedCount { get; private set; }
+
+		/// <summary>
+		/// 是否忽略TimeScale的影响，即在TimeScale改变后依然保持原有的播放速度
+		/// </summary>
+		public bool ignoreTimeScale;
 
 		int _curFrame; //当前帧
-		float _lastTime;
 		float _curFrameDelay; //当前帧延迟
-		uint _lastUpdateFrameId;
+		int _lastUpdateFrameId;
 
 		public PlayState()
 		{
 		}
 
+		/// <summary>
+		/// 
+		/// </summary>
+		/// <param name="mc"></param>
+		/// <param name="context"></param>
 		public void Update(MovieClip mc, UpdateContext context)
 		{
-			if (_lastUpdateFrameId == UpdateContext.frameId) //PlayState may be shared, only update once per frame
-				return;
-
-			_lastUpdateFrameId = UpdateContext.frameId;
-			float time = Time.time;
-			float elapsed = time - _lastTime;
-			if (ignoreTimeScale && Time.timeScale != 0)
-				elapsed /= Time.timeScale;
-			_lastTime = time;
+			float elapsed;
+			int frameId = Time.frameCount;
+			if (frameId - _lastUpdateFrameId != 1) 
+				//1、如果>1，表示不是连续帧了，说明刚启动（或者停止过），这里不能用流逝的时间了，不然会跳过很多帧
+				//2、如果==0，表示在本帧已经处理过了，这通常是因为一个PlayState用于多个MovieClip共享，目的是多个MovieClip同步播放
+				elapsed = 0;
+			else if (ignoreTimeScale)
+				elapsed = Time.unscaledDeltaTime;
+			else
+				elapsed = Time.deltaTime;
+			_lastUpdateFrameId = frameId;
 
 			reachEnding = false;
 			_curFrameDelay += elapsed;
@@ -39,7 +60,10 @@ namespace FairyGUI
 			if (_curFrameDelay < interval)
 				return;
 
-			_curFrameDelay = 0;
+			_curFrameDelay -= interval;
+			if (_curFrameDelay > mc.interval)
+				_curFrameDelay = mc.interval;
+
 			if (mc.swing)
 			{
 				if (reversed)
@@ -76,12 +100,18 @@ namespace FairyGUI
 			}
 		}
 
+		/// <summary>
+		/// 
+		/// </summary>
 		public int currrentFrame
 		{
 			get { return _curFrame; }
 			set { _curFrame = value; _curFrameDelay = 0; }
 		}
 
+		/// <summary>
+		/// 
+		/// </summary>
 		public void Rewind()
 		{
 			_curFrame = 0;
@@ -90,6 +120,9 @@ namespace FairyGUI
 			reachEnding = false;
 		}
 
+		/// <summary>
+		/// 
+		/// </summary>
 		public void Reset()
 		{
 			_curFrame = 0;
@@ -99,6 +132,10 @@ namespace FairyGUI
 			reversed = false;
 		}
 
+		/// <summary>
+		/// 
+		/// </summary>
+		/// <param name="src"></param>
 		public void Copy(PlayState src)
 		{
 			_curFrame = src._curFrame;

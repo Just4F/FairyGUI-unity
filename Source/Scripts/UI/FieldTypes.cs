@@ -39,6 +39,8 @@ namespace FairyGUI
 	{
 		None,
 		Scale,
+		ScaleMatchHeight,
+		ScaleMatchWidth,
 		ScaleFree
 	}
 
@@ -46,7 +48,8 @@ namespace FairyGUI
 	{
 		None,
 		Both,
-		Height
+		Height,
+		Shrink
 	}
 
 	public enum ScrollType
@@ -102,7 +105,8 @@ namespace FairyGUI
 		SingleColumn,
 		SingleRow,
 		FlowHorizontal,
-		FlowVertical
+		FlowVertical,
+		Pagination
 	}
 
 	public enum ListSelectionMode
@@ -139,10 +143,11 @@ namespace FairyGUI
 		Color,
 		Animation,
 		Visible,
-		Controller,
 		Sound,
 		Transition,
 		Shake,
+		ColorFilter,
+		Skew,
 		Unknown
 	}
 
@@ -256,6 +261,10 @@ namespace FairyGUI
 					return FillType.None;
 				case "scale":
 					return FillType.Scale;
+				case "scaleMatchHeight":
+					return FillType.ScaleMatchHeight;
+				case "scaleMatchWidth":
+					return FillType.ScaleMatchWidth;
 				case "scaleFree":
 					return FillType.ScaleFree;
 				default:
@@ -273,6 +282,8 @@ namespace FairyGUI
 					return AutoSizeType.Both;
 				case "height":
 					return AutoSizeType.Height;
+				case "shrink":
+					return AutoSizeType.Shrink;
 				default:
 					return AutoSizeType.None;
 			}
@@ -290,6 +301,8 @@ namespace FairyGUI
 					return ListLayoutType.FlowHorizontal;
 				case "flow_vt":
 					return ListLayoutType.FlowVertical;
+				case "pagination":
+					return ListLayoutType.Pagination;
 				default:
 					return ListLayoutType.SingleColumn;
 			}
@@ -445,14 +458,16 @@ namespace FairyGUI
 					return TransitionActionType.Animation;
 				case "Visible":
 					return TransitionActionType.Visible;
-				case "Controller":
-					return TransitionActionType.Controller;
 				case "Sound":
 					return TransitionActionType.Sound;
 				case "Transition":
 					return TransitionActionType.Transition;
 				case "Shake":
 					return TransitionActionType.Shake;
+				case "ColorFilter":
+					return TransitionActionType.ColorFilter;
+				case "Skew":
+					return TransitionActionType.Skew;
 				default:
 					return TransitionActionType.Unknown;
 			}

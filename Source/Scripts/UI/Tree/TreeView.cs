@@ -48,6 +48,11 @@ namespace FairyGUI
 		public EventListener onClickNode { get; private set; }
 
 		/// <summary>
+		/// 右键点击任意TreeNode时触发
+		/// </summary>
+		public EventListener onRightClickNode { get; private set; }
+
+		/// <summary>
 		/// 
 		/// </summary>
 		/// <param name="list"></param>
@@ -55,6 +60,7 @@ namespace FairyGUI
 		{
 			this.list = list;
 			list.onClickItem.Add(__clickItem);
+			list.onRightClickItem.Add(__clickItem);
 			list.RemoveChildrenToPool();
 
 			root = new TreeNode(true);
@@ -65,6 +71,7 @@ namespace FairyGUI
 			indent = 30;
 
 			onClickNode = new EventListener(this, "onClickNode");
+			onRightClickNode = new EventListener(this, "onRightClickNode");
 		}
 
 		/// <summary>
@@ -396,8 +403,14 @@ namespace FairyGUI
 			for (int i = 0; i < cnt; i++)
 			{
 				TreeNode node = folderNode.GetChildAt(i);
-				if (node.cell != null && node.cell.parent != null)
-					list.RemoveChild(node.cell);
+				if (node.cell != null)
+				{
+					if(node.cell.parent != null)
+						list.RemoveChild(node.cell);
+					list.itemPool.ReturnObject(node.cell);
+					node.cell.data = null;
+					node.cell = null;
+				}
 				if (node.isFolder && node.expanded)
 					HideFolderNode(node);
 			}
@@ -459,7 +472,10 @@ namespace FairyGUI
 				posY = list.scrollPane.posY;
 
 			TreeNode node = (TreeNode)((GObject)context.data).data;
-			onClickNode.Call(node);
+			if (context.type == list.onRightClickItem.type)
+				onRightClickNode.Call(node);
+			else
+				onClickNode.Call(node);
 
 			if (list.scrollPane != null)
 			{

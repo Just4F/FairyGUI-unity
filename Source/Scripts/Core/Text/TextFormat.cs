@@ -2,19 +2,65 @@
 
 namespace FairyGUI
 {
+	/// <summary>
+	/// 
+	/// </summary>
 	public class TextFormat
 	{
+		/// <summary>
+		/// 
+		/// </summary>
 		public int size;
+
+		/// <summary>
+		/// 
+		/// </summary>
 		public string font;
+
+		/// <summary>
+		/// 
+		/// </summary>
 		public Color color;
+
+		/// <summary>
+		/// 
+		/// </summary>
 		public int lineSpacing;
+
+		/// <summary>
+		/// 
+		/// </summary>
 		public int letterSpacing;
+
+		/// <summary>
+		/// 
+		/// </summary>
 		public bool bold;
+
+		/// <summary>
+		/// 
+		/// </summary>
 		public bool underline;
+
+		/// <summary>
+		/// 
+		/// </summary>
 		public bool italic;
 
+		/// <summary>
+		/// 
+		/// </summary>
 		public Color32[] gradientColor;
 
+		/// <summary>
+		/// 
+		/// </summary>
+		public AlignType align;
+
+		/// <summary>
+		/// 
+		/// </summary>
+		/// <param name="value"></param>
 		public void SetColor(uint value)
 		{
 			uint rr = (value >> 16) & 0x0000ff;
@@ -26,14 +72,24 @@ namespace FairyGUI
 			color = new Color(r, g, b, 1);
 		}
 
+		/// <summary>
+		/// 
+		/// </summary>
+		/// <param name="aFormat"></param>
+		/// <returns></returns>
 		public bool EqualStyle(TextFormat aFormat)
 		{
 			return size == aFormat.size && color.Equals(aFormat.color)
 				&& bold == aFormat.bold && underline == aFormat.underline
 				&& italic == aFormat.italic
-				&& gradientColor == aFormat.gradientColor;
+				&& gradientColor == aFormat.gradientColor
+				&& align == aFormat.align;
 		}
 
+		/// <summary>
+		/// 
+		/// </summary>
+		/// <param name="source"></param>
 		public void CopyFrom(TextFormat source)
 		{
 			this.size = source.size;
@@ -51,6 +107,7 @@ namespace FairyGUI
 			}
 			else
 				this.gradientColor = null;
+			this.align = source.align;
 		}
 	}
 }

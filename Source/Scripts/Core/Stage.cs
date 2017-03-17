@@ -1,5 +1,6 @@
 ﻿using System.Collections.Generic;
 using UnityEngine;
+using System.Text;
 using FairyGUI.Utils;
 
 #if UNITY_5_3_OR_NEWER
@@ -21,6 +22,11 @@ namespace FairyGUI
 		/// <summary>
 		/// 
 		/// </summary>
+		public static bool keyboardInput { get; private set; }
+
+		/// <summary>
+		/// 
+		/// </summary>
 		public int stageHeight { get; private set; }
 
 		/// <summary>
@@ -38,24 +44,10 @@ namespace FairyGUI
 		/// </summary>
 		public EventListener onStageResized { get; private set; }
 
-
-		/// <summary>
-		/// 
-		/// </summary>
-		public EventListener onCopy { get; private set; }
-
-		/// <summary>
-		/// 
-		/// </summary>
-		public EventListener onPaste { get; private set; }
-
 		/// <summary>
 		/// 
 		/// </summary>
 		public EventListener onTouchMove { get; private set; }
-
-		internal InputCaret inputCaret { get; private set; }
-		internal Highlighter highlighter { get; private set; }
 
 		DisplayObject _touchTarget;
 		DisplayObject _focused;
@@ -71,7 +63,13 @@ namespace FairyGUI
 		Vector2 _customInputPos;
 		bool _customInputButtonDown;
 
+		EventCallback1 _focusRemovedDelegate;
+
 		AudioSource _audio;
+
+#pragma warning disable 0649
+		IKeyboard _keyboard;
+#pragma warning restore 0649
 
 		List<NTexture> _toCollectTextures = new List<NTexture>();
 
@@ -99,12 +97,16 @@ namespace FairyGUI
 			{
 				_inst = new Stage();
 				GRoot._inst = new GRoot();
+				GRoot._inst.ApplyContentScaleFactor();
 				_inst.AddChild(GRoot._inst.displayObject);
 
 				StageCamera.CheckMainCamera();
 			}
 		}
 
+		/// <summary>
+		/// 
+		/// </summary>
 		public Stage()
 			: base()
 		{
@@ -116,7 +118,13 @@ namespace FairyGUI
 			stageHeight = Screen.height;
 			_frameGotHitTarget = -1;
 
-			touchScreen = Input.touchSupported;
+			if (Application.platform == RuntimePlatform.WindowsPlayer
+				|| Application.platform == RuntimePlatform.WindowsEditor
+				|| Application.platform == RuntimePlatform.OSXPlayer
+				|| Application.platform == RuntimePlatform.OSXEditor)
+				touchScreen = false;
+			else
+				touchScreen = Input.touchSupported && SystemInfo.deviceType != DeviceType.Desktop;
 
 			_touches = new TouchInfo[5];
 			for (int i = 0; i < _touches.Length; i++)
@@ -130,41 +138,36 @@ namespace FairyGUI
 
 			onStageResized = new EventListener(this, "onStageResized");
 			onTouchMove = new EventListener(this, "onTouchMove");
-			onCopy = new EventListener(this, "onCopy");
-			onPaste = new EventListener(this, "onPaste");
 
 			StageEngine engine = GameObject.FindObjectOfType<StageEngine>();
 			if (engine != null)
-				this.gameObject = engine.gameObject;
-			else
-			{
-				int layer = LayerMask.NameToLayer(StageCamera.LayerName);
+				Object.Destroy(engine.gameObject);
 
-				this.gameObject = new GameObject("Stage");
-				this.gameObject.hideFlags = HideFlags.None;
-				this.gameObject.layer = layer;
-				this.gameObject.AddComponent<StageEngine>();
-				this.gameObject.AddComponent<UIContentScaler>();
-			}
-			this.cachedTransform = gameObject.transform;
-			this.cachedTransform.localScale = new Vector3(StageCamera.UnitsPerPixel, StageCamera.UnitsPerPixel, StageCamera.UnitsPerPixel);
+			this.gameObject.name = "Stage";
+			this.gameObject.layer = LayerMask.NameToLayer(StageCamera.LayerName);
+			this.gameObject.AddComponent<StageEngine>();
+			this.gameObject.AddComponent<UIContentScaler>();
 			this.gameObject.SetActive(true);
-			UnityEngine.Object.DontDestroyOnLoad(this.gameObject);
+			Object.DontDestroyOnLoad(this.gameObject);
+
+			this.cachedTransform.localScale = new Vector3(StageCamera.UnitsPerPixel, StageCamera.UnitsPerPixel, StageCamera.UnitsPerPixel);
 
 			EnableSound();
 
-			inputCaret = new InputCaret();
-			highlighter = new Highlighter();
+			if (touchScreen)
+			{
+#if !(UNITY_WEBPLAYER || UNITY_STANDALONE_WIN || UNITY_STANDALONE_OSX || UNITY_EDITOR)
+				_keyboard = new FairyGUI.TouchScreenKeyboard();
+				keyboardInput = true;
+#endif
+			}
 
 			Timers.inst.Add(5, 0, RunTextureCollector);
-
-#if UNITY_WEBPLAYER || UNITY_WEBGL || UNITY_STANDALONE_WIN || UNITY_STANDALONE_OSX || UNITY_EDITOR
-			CopyPastePatch.Apply();
-#endif
 
 #if UNITY_5_4_OR_NEWER
 			SceneManager.sceneLoaded += SceneManager_sceneLoaded;
 #endif
+			_focusRemovedDelegate = OnFocusRemoved;
 		}
 
 #if UNITY_5_4_OR_NEWER
@@ -218,39 +221,25 @@ namespace FairyGUI
 				if (_focused == value)
 					return;
 
-				if (_focused != null)
-				{
-					if (_focused is TextField)
-					{
-						TextField textField = (TextField)_focused;
-						textField.onFocusOut.Call();
-						if (textField.richTextField != null)
-							textField.richTextField.onFocusOut.Call();
-					}
-
-					_focused.onRemovedFromStage.RemoveCapture(OnFocusRemoved);
-				}
-
+				DisplayObject oldFocus = _focused;
 				_focused = value;
 				if (_focused == this)
 					_focused = null;
+
+				if (oldFocus != null)
+				{
+					if (oldFocus is InputTextField)
+						((InputTextField)oldFocus).onFocusOut.Call();
+
+					oldFocus.onRemovedFromStage.RemoveCapture(_focusRemovedDelegate);
+				}
+
 				if (_focused != null)
 				{
-					TextField textField = null;
-					if ((_focused is RichTextField))
-						textField = ((RichTextField)_focused).textField;
-					else if ((_focused is TextField))
-						textField = (TextField)_focused;
+					if (_focused is InputTextField)
+						((InputTextField)_focused).onFocusIn.Call();
 
-					if (textField != null)
-					{
-						_focused = textField;
-						textField.onFocusIn.Call();
-						if (textField.richTextField != null)
-							textField.richTextField.onFocusIn.Call();
-					}
-
-					_focused.onRemovedFromStage.AddCapture(OnFocusRemoved);
+					_focused.onRemovedFromStage.AddCapture(_focusRemovedDelegate);
 				}
 			}
 		}
@@ -347,6 +336,8 @@ namespace FairyGUI
 
 			if (!touchScreen)
 				_touches[0].touchId = 0;
+
+			_touchCount = 0;
 		}
 
 
@@ -409,6 +400,37 @@ namespace FairyGUI
 				_audio.PlayOneShot(clip, this.soundVolume);
 		}
 
+		/// <summary>
+		/// 
+		/// </summary>
+		/// <param name="text"></param>
+		/// <param name="autocorrection"></param>
+		/// <param name="multiline"></param>
+		/// <param name="secure"></param>
+		/// <param name="alert"></param>
+		/// <param name="textPlaceholder"></param>
+		/// <param name="keyboardType"></param>
+		/// <param name="hideInput"></param>
+		public void OpenKeyboard(string text, bool autocorrection, bool multiline, bool secure, bool alert, string textPlaceholder, int keyboardType, bool hideInput)
+		{
+			if (_keyboard != null)
+				_keyboard.Open(text, autocorrection, multiline, secure, alert, textPlaceholder, keyboardType, hideInput);
+		}
+
+		/// <summary>
+		/// 
+		/// </summary>
+		public void CloseKeyboard()
+		{
+			if (_keyboard != null)
+				_keyboard.Close();
+		}
+
+		/// <summary>
+		/// 
+		/// </summary>
+		/// <param name="screenPos"></param>
+		/// <param name="buttonDown"></param>
 		public void SetCustomInput(Vector2 screenPos, bool buttonDown)
 		{
 			_customInput = true;
@@ -417,6 +439,12 @@ namespace FairyGUI
 			_frameGotHitTarget = 0;
 		}
 
+		/// <summary>
+		/// 
+		/// </summary>
+		/// <param name="screenPos"></param>
+		/// <param name="buttonDown"></param>
+		/// <param name="buttonUp"></param>
 		public void SetCustomInput(Vector2 screenPos, bool buttonDown, bool buttonUp)
 		{
 			_customInput = true;
@@ -428,6 +456,11 @@ namespace FairyGUI
 			_frameGotHitTarget = 0;
 		}
 
+		/// <summary>
+		/// 
+		/// </summary>
+		/// <param name="hit"></param>
+		/// <param name="buttonDown"></param>
 		public void SetCustomInput(ref RaycastHit hit, bool buttonDown)
 		{
 			Vector2 screenPos = Camera.main.WorldToScreenPoint(hit.point);
@@ -435,6 +468,12 @@ namespace FairyGUI
 			SetCustomInput(screenPos, buttonDown);
 		}
 
+		/// <summary>
+		/// 
+		/// </summary>
+		/// <param name="hit"></param>
+		/// <param name="buttonDown"></param>
+		/// <param name="buttonUp"></param>
 		public void SetCustomInput(ref RaycastHit hit, bool buttonDown, bool buttonUp)
 		{
 			Vector2 screenPos = Camera.main.WorldToScreenPoint(hit.point);
@@ -442,7 +481,7 @@ namespace FairyGUI
 			SetCustomInput(screenPos, buttonDown, buttonUp);
 		}
 
-		internal int InternalUpdate()
+		internal void InternalUpdate()
 		{
 			HandleEvents();
 
@@ -459,8 +498,6 @@ namespace FairyGUI
 
 				DynamicFont.textRebuildFlag = false;
 			}
-
-			return _updateContext.counter;
 		}
 
 		void GetHitTarget()
@@ -490,6 +527,7 @@ namespace FairyGUI
 					Vector2 pos = uTouch.position;
 					pos.y = stageHeight - pos.y;
 
+					_touchTarget = null;
 					TouchInfo touch = null;
 					for (int j = 0; j < 5; j++)
 					{
@@ -511,8 +549,10 @@ namespace FairyGUI
 						return;
 
 					touch.touchId = uTouch.fingerId;
-					_touchTarget = HitTest(pos, true);
-					touch.target = _touchTarget;
+					DisplayObject ht = HitTest(pos, true);
+					touch.target = ht;
+					if (ht != null)
+						_touchTarget = ht;
 				}
 			}
 			else
@@ -555,6 +595,7 @@ namespace FairyGUI
 				TouchInfo touch = _touches[0];
 				touch.keyCode = evt.keyCode;
 				touch.modifiers = evt.modifiers;
+				InputEvent.shiftDown = (evt.modifiers & EventModifiers.Shift) != 0;
 
 				touch.UpdateEvent();
 				DisplayObject f = this.focus;
@@ -600,6 +641,9 @@ namespace FairyGUI
 				HandleTouchEvents();
 			else
 				HandleMouseEvents();
+
+			if (_focused is InputTextField)
+				HandleTextInput();
 		}
 
 		void UpdateTouchPosition()
@@ -633,6 +677,38 @@ namespace FairyGUI
 			}
 		}
 
+		void HandleTextInput()
+		{
+			InputTextField textField = (InputTextField)_focused;
+			if (!textField.editable)
+				return;
+
+			if (_keyboard != null)
+			{
+				string s = _keyboard.GetInput();
+				if (s != null)
+					textField.ReplaceText(s);
+
+				if (_keyboard.done)
+					this.focus = null;
+			}
+			else
+			{
+				if (!string.IsNullOrEmpty(Input.inputString))
+				{
+					StringBuilder sb = new StringBuilder();
+					int len = Input.inputString.Length;
+					for (int i = 0; i < len; ++i)
+					{
+						char ch = Input.inputString[i];
+						if (ch >= ' ') sb.Append(ch.ToString());
+					}
+					if (sb.Length > 0)
+						textField.ReplaceSelection(sb.ToString());
+				}
+			}
+		}
+
 		void HandleCustomInput()
 		{
 			Vector2 pos = _customInputPos;
@@ -654,11 +730,8 @@ namespace FairyGUI
 			{
 				if (!touch.began)
 				{
-					touch.began = true;
-					_touchCount++;
-					touch.clickCancelled = false;
-					touch.downX = touch.x;
-					touch.downY = touch.y;
+					_touchCount = 1;
+					touch.begin();
 					this.focus = touch.target;
 
 					if (touch.target != null)
@@ -670,29 +743,14 @@ namespace FairyGUI
 			}
 			else if (touch.began)
 			{
-				touch.began = false;
-				_touchCount--;
+				_touchCount = 0;
+				touch.end();
 
-				if (touch.target != null)
+				DisplayObject clickTarget = touch.ClickTest();
+				if (clickTarget != null)
 				{
 					touch.UpdateEvent();
-					touch.CallTouchEnd();
-
-					if (!touch.clickCancelled && Mathf.Abs(touch.x - touch.downX) < 50 && Mathf.Abs(touch.y - touch.downY) < 50)
-					{
-						if (Time.realtimeSinceStartup - touch.lastClickTime < 0.35f)
-						{
-							if (touch.clickCount == 2)
-								touch.clickCount = 1;
-							else
-								touch.clickCount++;
-						}
-						else
-							touch.clickCount = 1;
-						touch.lastClickTime = Time.realtimeSinceStartup;
-						touch.UpdateEvent();
-						touch.target.onClick.BubbleCall(touch.evt);
-					}
+					clickTarget.onClick.BubbleCall(touch.evt);
 				}
 			}
 		}
@@ -715,11 +773,8 @@ namespace FairyGUI
 			{
 				if (!touch.began)
 				{
-					touch.began = true;
-					_touchCount++;
-					touch.clickCancelled = false;
-					touch.downX = touch.x;
-					touch.downY = touch.y;
+					_touchCount = 1;
+					touch.begin();
 					touch.button = Input.GetMouseButtonDown(2) ? 2 : (Input.GetMouseButtonDown(1) ? 1 : 0);
 					this.focus = touch.target;
 
@@ -734,33 +789,18 @@ namespace FairyGUI
 			{
 				if (touch.began)
 				{
-					touch.began = false;
-					_touchCount--;
+					_touchCount = 0;
+					touch.end();
 
-					if (touch.target != null)
+					DisplayObject clickTarget = touch.ClickTest();
+					if (clickTarget != null)
 					{
 						touch.UpdateEvent();
-						touch.CallTouchEnd();
 
-						if (!touch.clickCancelled && Mathf.Abs(touch.x - touch.downX) < 50 && Mathf.Abs(touch.y - touch.downY) < 50)
-						{
-							if (Time.realtimeSinceStartup - touch.lastClickTime < 0.35f)
-							{
-								if (touch.clickCount == 2)
-									touch.clickCount = 1;
-								else
-									touch.clickCount++;
-							}
-							else
-								touch.clickCount = 1;
-							touch.lastClickTime = Time.realtimeSinceStartup;
-							touch.UpdateEvent();
-
-							if (Input.GetMouseButtonUp(1))
-								touch.target.onRightClick.BubbleCall(touch.evt);
-							else
-								touch.target.onClick.BubbleCall(touch.evt);
-						}
+						if (Input.GetMouseButtonUp(1))
+							clickTarget.onRightClick.BubbleCall(touch.evt);
+						else
+							clickTarget.onClick.BubbleCall(touch.evt);
 					}
 				}
 			}
@@ -768,7 +808,8 @@ namespace FairyGUI
 
 		void HandleTouchEvents()
 		{
-			for (int i = 0; i < Input.touchCount; ++i)
+			int tc = Input.touchCount;
+			for (int i = 0; i < tc; ++i)
 			{
 				Touch uTouch = Input.GetTouch(i);
 
@@ -804,11 +845,8 @@ namespace FairyGUI
 				{
 					if (!touch.began)
 					{
-						touch.began = true;
 						_touchCount++;
-						touch.clickCancelled = false;
-						touch.downX = touch.x;
-						touch.downY = touch.y;
+						touch.begin();
 						this.focus = touch.target;
 
 						if (touch.target != null)
@@ -822,20 +860,15 @@ namespace FairyGUI
 				{
 					if (touch.began)
 					{
-						touch.began = false;
 						_touchCount--;
+						touch.end();
 
-						if (touch.target != null)
+						DisplayObject clickTarget = touch.ClickTest();
+						if (clickTarget != null)
 						{
+							touch.clickCount = uTouch.tapCount;
 							touch.UpdateEvent();
-							touch.CallTouchEnd();
-
-							if (!touch.clickCancelled && Mathf.Abs(touch.x - touch.downX) < 50 && Mathf.Abs(touch.y - touch.downY) < 50)
-							{
-								touch.clickCount = uTouch.tapCount;
-								touch.UpdateEvent();
-								touch.target.onClick.BubbleCall(touch.evt);
-							}
+							clickTarget.onClick.BubbleCall(touch.evt);
 						}
 					}
 
@@ -897,6 +930,47 @@ namespace FairyGUI
 		}
 
 		/// <summary>
+		/// 设置UIPanel/UIPainter等的渲染层次，由UIPanel等内部调用。开发者不需要调用。
+		/// </summary>
+		/// <param name="target"></param>
+		/// <param name="value"></param>
+		public void ApplyPanelOrder(Container target)
+		{
+			int sortingOrder = target._panelOrder;
+			int numChildren = Stage.inst.numChildren;
+			int i = 0;
+			int j;
+			int curIndex = -1;
+			for (; i < numChildren; i++)
+			{
+				DisplayObject obj = Stage.inst.GetChildAt(i);
+				if (obj == target)
+				{
+					curIndex = i;
+					continue;
+				}
+
+				if (obj == GRoot.inst.displayObject)
+					j = 1000;
+				else if (obj is Container)
+					j = ((Container)obj)._panelOrder;
+				else
+					continue;
+
+				if (sortingOrder <= j)
+				{
+					if (curIndex != -1)
+						Stage.inst.AddChildAt(target, i - 1);
+					else
+						Stage.inst.AddChildAt(target, i);
+					break;
+				}
+			}
+			if (i == numChildren)
+				Stage.inst.AddChild(target);
+		}
+
+		/// <summary>
 		/// Adjust display order of all UIPanels rendering in worldspace by their z order.
 		/// </summary>
 		/// <param name="panelSortingOrder">Only UIPanel.sortingOrder equals to this value will be involve in this sorting</param>
@@ -916,8 +990,8 @@ namespace FairyGUI
 					continue;
 
 				//借用一下tmpBounds
-				obj._internal_bounds.x = obj.cachedTransform.position.z;
-				obj._internal_bounds.y = i;
+				obj._internal_bounds[0] = obj.cachedTransform.position.z;
+				obj._internal_bounds[1] = i;
 
 				sTempList1.Add(obj);
 				sTempList2.Add(i);
@@ -935,16 +1009,20 @@ namespace FairyGUI
 		static List<int> sTempList2;
 		static int CompareZ(DisplayObject c1, DisplayObject c2)
 		{
-			int ret = ((Container)c2)._internal_bounds.x.CompareTo(((Container)c1)._internal_bounds.x);
+			int ret = ((Container)c2)._internal_bounds[0].CompareTo(((Container)c1)._internal_bounds[0]);
 			if (ret == 0)
 			{
 				//如果大家z值一样，使用原来的顺序，防止不停交换顺序（闪烁）
-				return c1._internal_bounds.y.CompareTo(c2._internal_bounds.y);
+				return c1._internal_bounds[1].CompareTo(c2._internal_bounds[1]);
 			}
 			else
 				return ret;
 		}
 
+		/// <summary>
+		/// 
+		/// </summary>
+		/// <param name="texture"></param>
 		public void MonitorTexture(NTexture texture)
 		{
 			if (_toCollectTextures.IndexOf(texture) == -1)
@@ -992,6 +1070,17 @@ namespace FairyGUI
 			if (touch.touchEndMonitors.IndexOf(target) == -1)
 				touch.touchEndMonitors.Add(target);
 		}
+
+		internal Transform CreatePoolManager(string name)
+		{
+			GameObject go = new GameObject("[" + name + "]");
+			go.SetActive(false);
+
+			Transform t = go.transform;
+			ToolSet.SetParent(t, cachedTransform);
+
+			return t;
+		}
 	}
 
 	class TouchInfo
@@ -1011,14 +1100,18 @@ namespace FairyGUI
 		public bool clickCancelled;
 		public float lastClickTime;
 		public DisplayObject target;
+		public List<DisplayObject> downTargets;
 		public DisplayObject lastRollOver;
 		public List<EventDispatcher> touchEndMonitors;
 
 		public InputEvent evt;
 
+		static List<EventBridge> sHelperChain = new List<EventBridge>();
+
 		public TouchInfo()
 		{
 			evt = new InputEvent();
+			downTargets = new List<DisplayObject>();
 			touchEndMonitors = new List<EventDispatcher>();
 			Reset();
 		}
@@ -1036,6 +1129,7 @@ namespace FairyGUI
 			lastClickTime = 0;
 			began = false;
 			target = null;
+			downTargets.Clear();
 			lastRollOver = null;
 			clickCancelled = false;
 			touchEndMonitors.Clear();
@@ -1053,20 +1147,82 @@ namespace FairyGUI
 			evt.button = this.button;
 		}
 
-		static List<EventBridge> sHelperChain = new List<EventBridge>();
-		public void CallTouchEnd()
+		public void begin()
 		{
-			if (touchEndMonitors.Count > 0)
+			began = true;
+			clickCancelled = false;
+			downX = x;
+			downY = y;
+
+			downTargets.Clear();
+			if (target != null)
 			{
-				int len = touchEndMonitors.Count;
-				for (int i = 0; i < len; i++)
-					touchEndMonitors[i].GetChainBridges("onTouchEnd", sHelperChain, false);
-				target.BubbleEvent("onTouchEnd", evt, sHelperChain);
-				touchEndMonitors.Clear();
-				sHelperChain.Clear();
+				downTargets.Add(target);
+				DisplayObject obj = target;
+				while (obj != null)
+				{
+					downTargets.Add(obj);
+					obj = obj.parent;
+				}
+			}
+		}
+
+		public void end()
+		{
+			began = false;
+
+			if (target != null)
+			{
+				UpdateEvent();
+
+				if (touchEndMonitors.Count > 0)
+				{
+					int len = touchEndMonitors.Count;
+					for (int i = 0; i < len; i++)
+						touchEndMonitors[i].GetChainBridges("onTouchEnd", sHelperChain, false);
+					target.BubbleEvent("onTouchEnd", evt, sHelperChain);
+					sHelperChain.Clear();
+				}
+				else
+					target.onTouchEnd.BubbleCall(evt);
+			}
+
+			touchEndMonitors.Clear();
+
+			if (Time.realtimeSinceStartup - lastClickTime < 0.35f)
+			{
+				if (clickCount == 2)
+					clickCount = 1;
+				else
+					clickCount++;
 			}
 			else
-				target.onTouchEnd.BubbleCall(evt);
+				clickCount = 1;
+			lastClickTime = Time.realtimeSinceStartup;
+		}
+
+		public DisplayObject ClickTest()
+		{
+			if (downTargets.Count == 0
+				|| clickCancelled
+				|| Mathf.Abs(x - downX) > 50 || Mathf.Abs(y - downY) > 50)
+				return null;
+
+			DisplayObject obj = downTargets[0];
+			if (obj.stage != null) //依然派发到原来的downTarget，虽然可能它已经偏离当前位置，主要是为了正确处理点击缩放的效果
+				return obj;
+
+			obj = target;
+			while (obj != null)
+			{
+				int i = downTargets.IndexOf(obj);
+				if (i != -1 && obj.stage != null)
+					return obj;
+
+				obj = obj.parent;
+			}
+
+			return obj;
 		}
 	}
 }

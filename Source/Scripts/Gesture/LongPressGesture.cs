@@ -10,6 +10,11 @@ namespace FairyGUI
 	public class LongPressGesture : EventDispatcher
 	{
 		/// <summary>
+		/// 
+		/// </summary>
+		public GObject host { get; private set; }
+
+		/// <summary>
 		/// 当手指按下时派发该事件。
 		/// </summary>
 		public EventListener onBegin { get; private set; }
@@ -37,7 +42,11 @@ namespace FairyGUI
 		/// </summary>
 		public bool once;
 
-		GObject _host;
+		/// <summary>
+		/// 手指按住后，移动超出此半径范围则手势停止。
+		/// </summary>
+		public int holdRangeRadius;
+
 		Vector2 _startPoint;
 		bool _started;
 
@@ -46,9 +55,10 @@ namespace FairyGUI
 
 		public LongPressGesture(GObject host)
 		{
-			_host = host;
+			this.host = host;
 			trigger = TRIGGER;
 			interval = INTERVAL;
+			holdRangeRadius = 50;
 			Enable(true);
 
 			onBegin = new EventListener(this, "onLongPressBegin");
@@ -59,20 +69,20 @@ namespace FairyGUI
 		public void Dispose()
 		{
 			Enable(false);
-			_host = null;
+			host = null;
 		}
 
 		public void Enable(bool value)
 		{
 			if (value)
 			{
-				_host.onTouchBegin.Add(__touchBegin);
-				_host.onTouchEnd.Add(__touchEnd);
+				host.onTouchBegin.Add(__touchBegin);
+				host.onTouchEnd.Add(__touchEnd);
 			}
 			else
 			{
-				_host.onTouchBegin.Remove(__touchBegin);
-				_host.onTouchEnd.Remove(__touchBegin);
+				host.onTouchBegin.Remove(__touchBegin);
+				host.onTouchEnd.Remove(__touchEnd);
 				Timers.inst.Remove(__timer);
 			}
 		}
@@ -80,12 +90,13 @@ namespace FairyGUI
 		public void Cancel()
 		{
 			Timers.inst.Remove(__timer);
+			_started = false;
 		}
 
 		void __touchBegin(EventContext context)
 		{
 			InputEvent evt = context.inputEvent;
-			_startPoint = _host.GlobalToLocal(new Vector2(evt.x, evt.y));
+			_startPoint = host.GlobalToLocal(new Vector2(evt.x, evt.y));
 			_started = false;
 
 			Timers.inst.Add(trigger, 1, __timer);
@@ -94,25 +105,33 @@ namespace FairyGUI
 
 		void __timer(object param)
 		{
-			Vector2 pt = Stage.inst.touchPosition;
-			pt = _host.GlobalToLocal(pt) - _startPoint;
-			if (Mathf.Abs(pt.x) > UIConfig.touchDragSensitivity || Mathf.Abs(pt.y) > UIConfig.touchDragSensitivity)
+			Vector2 pt = host.GlobalToLocal(Stage.inst.touchPosition);
+			if (Mathf.Pow(pt.x - _startPoint.x, 2) + Mathf.Pow(pt.y - _startPoint.y, 2) > Mathf.Pow(holdRangeRadius, 2))
 			{
 				Timers.inst.Remove(__timer);
 				return;
 			}
-
-			onAction.Call();
-			if (!_started && !once)
+			if (!_started)
 			{
 				_started = true;
-				Timers.inst.Add(interval, 0, __timer);
+				onBegin.Call();
+
+				if (!once)
+					Timers.inst.Add(interval, 0, __timer);
 			}
+
+			onAction.Call();
 		}
 
 		void __touchEnd(EventContext context)
 		{
 			Timers.inst.Remove(__timer);
+
+			if (_started)
+			{
+				_started = false;
+				onEnd.Call();
+			}
 		}
 	}
 }

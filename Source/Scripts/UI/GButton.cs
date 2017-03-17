@@ -81,7 +81,7 @@ namespace FairyGUI
 		/// <summary>
 		/// Icon of the button.
 		/// </summary>
-		public string icon
+		override public string icon
 		{
 			get
 			{
@@ -91,12 +91,9 @@ namespace FairyGUI
 			{
 				_icon = value;
 				value = (_selected && _selectedIcon != null) ? _selectedIcon : _icon;
-				if (_iconObject is GLoader)
-					((GLoader)_iconObject).url = value;
-				else if (_iconObject is GLabel)
-					((GLabel)_iconObject).icon = value;
-				else if (_iconObject is GButton)
-					((GButton)_iconObject).icon = value;
+				if (_iconObject != null)
+					_iconObject.icon = value;
+				UpdateGear(7);
 			}
 		}
 
@@ -114,6 +111,7 @@ namespace FairyGUI
 				_title = value;
 				if (_titleObject != null)
 					_titleObject.text = (_selected && _selectedTitle != null) ? _selectedTitle : _title;
+				UpdateGear(6);
 			}
 		}
 
@@ -139,12 +137,8 @@ namespace FairyGUI
 			{
 				_selectedIcon = value;
 				value = (_selected && _selectedIcon != null) ? _selectedIcon : _icon;
-				if (_iconObject is GLoader)
-					((GLoader)_iconObject).url = value;
-				else if (_iconObject is GLabel)
-					((GLabel)_iconObject).icon = value;
-				else if (_iconObject is GButton)
-					((GButton)_iconObject).icon = value;
+				if (_iconObject != null)
+					_iconObject.icon = value;
 			}
 		}
 
@@ -192,6 +186,34 @@ namespace FairyGUI
 			}
 		}
 
+		public int titleFontSize
+		{
+			get
+			{
+				if (_titleObject is GTextField)
+					return ((GTextField)_titleObject).textFormat.size;
+				else if (_titleObject is GLabel)
+					return ((GLabel)_titleObject).titleFontSize;
+				else if (_titleObject is GButton)
+					return ((GButton)_titleObject).titleFontSize;
+				else
+					return 0;
+			}
+			set
+			{
+				if (_titleObject is GTextField)
+				{
+					TextFormat tf = ((GTextField)_titleObject).textFormat;
+					tf.size = value;
+					((GTextField)_titleObject).textFormat = tf;
+				}
+				else if (_titleObject is GLabel)
+					((GLabel)_titleObject).titleFontSize = value;
+				else if (_titleObject is GButton)
+					((GButton)_titleObject).titleFontSize = value;
+			}
+		}
+
 		/// <summary>
 		/// If the button is in selected status.
 		/// </summary>
@@ -216,12 +238,8 @@ namespace FairyGUI
 					if (_selectedIcon != null)
 					{
 						string str = _selected ? _selectedIcon : _icon;
-						if (_iconObject is GLoader)
-							((GLoader)_iconObject).url = str;
-						else if (_iconObject is GLabel)
-							((GLabel)_iconObject).icon = str;
-						else if (_iconObject is GButton)
-							((GButton)_iconObject).icon = str;
+						if (_iconObject != null)
+							_iconObject.icon = str;
 					}
 					if (_relatedController != null
 						&& parent != null
@@ -416,11 +434,17 @@ namespace FairyGUI
 			{
 				_downEffect = str == "dark" ? 1 : (str == "scale" ? 2 : 0);
 				_downEffectValue = xml.GetAttributeFloat("downEffectValue");
+				if (_downEffect == 2)
+					this.SetPivot(0.5f, 0.5f);
 			}
 
 			_buttonController = GetController("button");
 			_titleObject = GetChild("title");
 			_iconObject = GetChild("icon");
+			if (_titleObject != null)
+				_title = _titleObject.text;
+			if (_iconObject != null)
+				_icon = _iconObject.icon;
 
 			if (_mode == ButtonMode.Common)
 				SetState(UP);
@@ -436,9 +460,6 @@ namespace FairyGUI
 		override public void Setup_AfterAdd(XML cxml)
 		{
 			base.Setup_AfterAdd(cxml);
-
-			if (_downEffect == 2)
-				this.SetPivot(0.5f, 0.5f);
 
 			XML xml = cxml.GetNode("Button");
 			if (xml == null)
@@ -462,6 +483,9 @@ namespace FairyGUI
 			str = xml.GetAttribute("titleColor");
 			if (str != null)
 				this.titleColor = ToolSet.ConvertFromHtmlColor(str);
+			str = xml.GetAttribute("titleFontSize");
+			if (str != null)
+				this.titleFontSize = int.Parse(str);
 			str = xml.GetAttribute("controller");
 			if (str != null)
 				_relatedController = parent.GetController(str);

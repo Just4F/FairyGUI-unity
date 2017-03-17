@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using UnityEngine;
@@ -36,6 +37,12 @@ namespace FairyGUI
 		/// <returns></returns>
 		public delegate UnityEngine.Object LoadResource(string name, string extension, System.Type type);
 
+		/// <summary>
+		/// 
+		/// </summary>
+		/// <param name="result"></param>
+		public delegate void CreateObjectCallback(GObject result);
+
 		List<PackageItem> _items;
 		Dictionary<string, PackageItem> _itemsById;
 		Dictionary<string, PackageItem> _itemsByName;
@@ -45,11 +52,12 @@ namespace FairyGUI
 		string _assetNamePrefix;
 		string _customId;
 		bool _fromBundle;
+		bool _loadingPackage;
 
 		class AtlasSprite
 		{
 			public string atlas;
-			public Rect rect;
+			public Rect rect = new Rect();
 			public bool rotated;
 		}
 		Dictionary<string, AtlasSprite> _sprites;
@@ -264,7 +272,7 @@ namespace FairyGUI
 					throw new Exception("FairyGUI: '" + packageIdOrName + "' is not a valid package id or name.");
 			}
 			pkg.Dispose(allowDestroyingAssets);
-			_packageInstById.Remove(packageIdOrName);
+			_packageInstById.Remove(pkg.id);
 			if (pkg._customId != null)
 				_packageInstById.Remove(pkg._customId);
 			if (pkg.assetPath != null)
@@ -278,13 +286,22 @@ namespace FairyGUI
 		/// </summary>
 		public static void RemoveAllPackages()
 		{
+			RemoveAllPackages(false);
+		}
+
+		/// <summary>
+		/// 
+		/// </summary>
+		/// <param name="allowDestroyAssets"></param>
+		public static void RemoveAllPackages(bool allowDestroyAssets)
+		{
 			if (_packageInstById.Count > 0)
 			{
 				UIPackage[] pkgs = _packageList.ToArray();
 
 				foreach (UIPackage pkg in pkgs)
 				{
-					pkg.Dispose(false);
+					pkg.Dispose(allowDestroyAssets);
 				}
 			}
 			_packageList.Clear();
@@ -361,6 +378,24 @@ namespace FairyGUI
 				return null;
 		}
 
+		public static void CreateObjectAsync(string pkgName, string resName, CreateObjectCallback callback)
+		{
+			UIPackage pkg = GetByName(pkgName);
+			if (pkg != null)
+				pkg.CreateObjectAsync(resName, callback);
+			else
+				Debug.LogError("FairyGUI: package not found - " + pkgName);
+		}
+
+		public static void CreateObjectFromURL(string url, CreateObjectCallback callback)
+		{
+			PackageItem pi = GetItemByURL(url);
+			if (pi != null)
+				pi.owner.CreateObjectAsync(pi, callback);
+			else
+				Debug.LogError("FairyGUI: resource not found - " + url);
+		}
+
 		/// <summary>
 		/// Get a asset with a certain name.
 		/// </summary>
@@ -411,15 +446,65 @@ namespace FairyGUI
 
 		public static PackageItem GetItemByURL(string url)
 		{
-			if (url.Length > 13)
+			if (url == null)
+				return null;
+
+			int pos1 = url.IndexOf("//");
+			if (pos1 == -1)
+				return null;
+
+			int pos2 = url.IndexOf('/', pos1 + 2);
+			if (pos2 == -1)
 			{
-				string pkgId = url.Substring(5, 8);
-				string srcId = url.Substring(13);
-				UIPackage pkg = GetById(pkgId);
-				if (pkg != null)
-					return pkg.GetItem(srcId);
+				if (url.Length > 13)
+				{
+					string pkgId = url.Substring(5, 8);
+					UIPackage pkg = GetById(pkgId);
+					if (pkg != null)
+					{
+						string srcId = url.Substring(13);
+						return pkg.GetItem(srcId);
+					}
+				}
 			}
+			else
+			{
+				string pkgName = url.Substring(pos1 + 2, pos2 - pos1 - 2);
+				UIPackage pkg = GetByName(pkgName);
+				if (pkg != null)
+				{
+					string srcName = url.Substring(pos2 + 1);
+					return pkg.GetItemByName(srcName);
+				}
+			}
+
 			return null;
+		}
+
+		/// <summary>
+		/// 将'ui://包名/组件名'转换为以内部id表达的url格式。如果传入的url本身就是内部id格式，则直接返回。
+		/// 同时这个方法还带格式检测，如果传入不正确的url，会返回null。
+		/// </summary>
+		/// <param name="url"></param>
+		/// <returns></returns>
+		public static string NormalizeURL(string url)
+		{
+			if (url == null)
+				return null;
+
+			int pos1 = url.IndexOf("//");
+			if (pos1 == -1)
+				return null;
+
+			int pos2 = url.IndexOf('/', pos1 + 2);
+			if (pos2 == -1)
+				return url;
+			else
+			{
+				string pkgName = url.Substring(pos1 + 2, pos2 - pos1 - 2);
+				string srcName = url.Substring(pos2 + 1);
+				return GetItemURL(pkgName, srcName);
+			}
 		}
 
 		/// <summary>
@@ -429,9 +514,10 @@ namespace FairyGUI
 		public static void SetStringsSource(XML source)
 		{
 			_stringsSource = new Dictionary<string, Dictionary<string, string>>();
-			XMLList list = source.Elements("string");
-			foreach (XML cxml in list)
+			XMLList.Enumerator et = source.GetEnumerator("string");
+			while (et.MoveNext())
 			{
+				XML cxml = et.Current;
 				string key = cxml.GetAttribute("name");
 				string text = cxml.text;
 				int i = key.IndexOf("-");
@@ -479,6 +565,9 @@ namespace FairyGUI
 		{
 			_descPack = new Dictionary<string, string>();
 			_resBundle = res;
+
+			if (!Application.isPlaying)
+				UIObjectFactory.Clear();
 
 			DecodeDesc(desc);
 
@@ -530,6 +619,9 @@ namespace FairyGUI
 				Debug.LogError("FairyGUI: cannot load package from '" + _assetNamePrefix + "'");
 				return;
 			}
+
+			_loadingPackage = true;
+
 			arr = str.Split('\n');
 			int cnt = arr.Length;
 			for (int i = 1; i < cnt; i++)
@@ -573,7 +665,7 @@ namespace FairyGUI
 			}
 
 			if (!_descPack.TryGetValue("package.xml", out str))
-				throw new Exception("FairyGUI: invalid package '" + _assetNamePrefix + "'");
+				throw new Exception("FairyGUI: invalid package '" + _assetNamePrefix + "', if the files is checked out from git, make sure to disable autocrlf option!");
 
 			XML xml = new XML(str);
 
@@ -622,6 +714,8 @@ namespace FairyGUI
 									rect.width = int.Parse(arr[2]);
 									rect.height = int.Parse(arr[3]);
 									pi.scale9Grid = rect;
+
+									pi.tileGridIndice = cxml.GetAttributeInt("gridTile");
 								}
 							}
 							else if (scale == "tile")
@@ -635,6 +729,12 @@ namespace FairyGUI
 							FontManager.RegisterFont(pi.bitmapFont, null);
 							break;
 						}
+
+					case PackageItemType.Component:
+						{
+							UIObjectFactory.ResolvePackageItemExtension(pi);
+						}
+						break;
 				}
 				_items.Add(pi);
 				_itemsById[pi.id] = pi;
@@ -660,6 +760,8 @@ namespace FairyGUI
 				_resBundle.Unload(false);
 				_resBundle = null;
 			}
+
+			_loadingPackage = false;
 		}
 
 		static int ComparePackageItem(PackageItem p1, PackageItem p2)
@@ -695,7 +797,7 @@ namespace FairyGUI
 					if (allowDestroyingAssets)
 					{
 						if (_fromBundle)
-							AudioClip.DestroyImmediate(pi.audioClip);
+							AudioClip.DestroyImmediate(pi.audioClip, true);
 						else
 							Resources.UnloadAsset(pi.audioClip);
 					}
@@ -745,6 +847,176 @@ namespace FairyGUI
 			return CreateObject(pi, userClass);
 		}
 
+		public void CreateObjectAsync(string resName, CreateObjectCallback callback)
+		{
+			PackageItem pi;
+			if (!_itemsByName.TryGetValue(resName, out pi))
+			{
+				Debug.LogError("FairyGUI: resource not found - " + resName + " in " + this.name);
+				return;
+			}
+
+			CreateObjectAsync(pi, callback);
+		}
+
+		GObject CreateObject(PackageItem item, System.Type userClass)
+		{
+			Stats.LatestObjectCreation = 0;
+			Stats.LatestGraphicsCreation = 0;
+
+			GetItemAsset(item);
+
+			GObject g = null;
+			if (item.type == PackageItemType.Component)
+			{
+				if (userClass != null)
+					g = (GComponent)userClass.Assembly.CreateInstance(userClass.FullName);
+				else
+					g = UIObjectFactory.NewObject(item);
+			}
+			else
+				g = UIObjectFactory.NewObject(item);
+
+			if (g == null)
+				return null;
+
+			_constructing++;
+			g.packageItem = item;
+			g.ConstructFromResource();
+			_constructing--;
+			return g;
+		}
+
+		void CreateObjectAsync(PackageItem item, CreateObjectCallback callback)
+		{
+			Timers.inst.StartCoroutine(_CreateObjectAsync(item, callback));
+		}
+
+		IEnumerator _CreateObjectAsync(PackageItem item, CreateObjectCallback callback)
+		{
+			Stats.LatestObjectCreation = 0;
+			Stats.LatestGraphicsCreation = 0;
+
+			float frameTime = UIConfig.frameTimeForAsyncUIConstruction;
+
+			List<DisplayListItem> itemList = new List<DisplayListItem>();
+			CollectComponentChildren(item, itemList);
+			itemList.Add(new DisplayListItem(item, null));
+
+			int cnt = itemList.Count;
+			List<GObject> objectPool = new List<GObject>(cnt);
+			GObject obj;
+			DisplayListItem di;
+			float t = Time.realtimeSinceStartup;
+			bool alreadyNextFrame = false;
+
+			for (int i = 0; i < cnt; i++)
+			{
+				di = itemList[i];
+				if (di.packageItem != null)
+				{
+					obj = UIObjectFactory.NewObject(di.packageItem);
+					obj.packageItem = di.packageItem;
+					objectPool.Add(obj);
+
+					_constructing++;
+					if (di.packageItem.type == PackageItemType.Component)
+					{
+						int poolStart = objectPool.Count - di.packageItem.displayList.Length - 1;
+
+						((GComponent)obj).ConstructFromResource(objectPool, poolStart);
+
+						objectPool.RemoveRange(poolStart, di.packageItem.displayList.Length);
+					}
+					else
+					{
+						GetItemAsset(di.packageItem);
+						obj.ConstructFromResource();
+					}
+					_constructing--;
+				}
+				else
+				{
+					obj = UIObjectFactory.NewObject(di.type);
+					objectPool.Add(obj);
+
+					if (di.type == "list" && di.listItemCount > 0)
+					{
+						int poolStart = objectPool.Count - di.listItemCount - 1;
+						for (int k = 0; k < di.listItemCount; k++) //把他们都放到pool里，这样GList在创建时就不需要创建对象了
+							((GList)obj).itemPool.ReturnObject(objectPool[k + poolStart]);
+						objectPool.RemoveRange(poolStart, di.listItemCount);
+					}
+				}
+
+				if ((i % 5 == 0) && Time.realtimeSinceStartup - t >= frameTime)
+				{
+					yield return null;
+					t = Time.realtimeSinceStartup;
+					alreadyNextFrame = true;
+				}
+			}
+
+			if (!alreadyNextFrame) //强制至至少下一帧才调用callback，避免调用者逻辑出错
+				yield return null;
+
+			callback(objectPool[0]);
+		}
+
+		/// <summary>
+		/// 收集创建目标对象所需的所有类型信息
+		/// </summary>
+		/// <param name="item"></param>
+		/// <param name="list"></param>
+		void CollectComponentChildren(PackageItem item, List<DisplayListItem> list)
+		{
+			if (!item.decoded)
+				LoadComponent(item);
+			if (item.displayList == null)
+			{
+				LoadComponentChildren(item);
+				TranslateComponent(item);
+			}
+
+			int cnt = item.displayList.Length;
+			for (int i = 0; i < cnt; i++)
+			{
+				DisplayListItem di = item.displayList[i];
+				if (di.packageItem != null && di.packageItem.type == PackageItemType.Component)
+					CollectComponentChildren(di.packageItem, list);
+				else if (di.type == "list") //也要收集列表的item
+				{
+					XMLList.Enumerator et = di.desc.GetEnumerator("item");
+					string defaultItem = null;
+					di.listItemCount = 0;
+					while (et.MoveNext())
+					{
+						XML ix = et.Current;
+						string url = ix.GetAttribute("url");
+						if (string.IsNullOrEmpty(url))
+						{
+							if (defaultItem == null)
+								defaultItem = di.desc.GetAttribute("defaultItem");
+							url = defaultItem;
+							if (string.IsNullOrEmpty(url))
+								continue;
+						}
+
+						PackageItem pi = UIPackage.GetItemByURL(url);
+						if (pi != null)
+						{
+							if (pi.type == PackageItemType.Component)
+								CollectComponentChildren(pi, list);
+
+							list.Add(new DisplayListItem(pi, null));
+							di.listItemCount++;
+						}
+					}
+				}
+				list.Add(di);
+			}
+		}
+
 		/// <summary>
 		/// 
 		/// </summary>
@@ -767,28 +1039,6 @@ namespace FairyGUI
 			return _items;
 		}
 
-		internal GObject CreateObject(PackageItem item, System.Type userClass)
-		{
-			GObject g = null;
-			if (item.type == PackageItemType.Component)
-			{
-				if (userClass != null)
-					g = (GComponent)userClass.Assembly.CreateInstance(userClass.FullName);
-				else
-					g = UIObjectFactory.NewObject(item);
-			}
-			else
-				g = UIObjectFactory.NewObject(item);
-
-			if (g == null)
-				return null;
-
-			_constructing++;
-			g.ConstructFromResource(item);
-			_constructing--;
-			return g;
-		}
-
 		public PackageItem GetItem(string itemId)
 		{
 			PackageItem pi;
@@ -807,7 +1057,7 @@ namespace FairyGUI
 				return null;
 		}
 
-		internal object GetItemAsset(PackageItem item)
+		public object GetItemAsset(PackageItem item)
 		{
 			switch (item.type)
 			{
@@ -827,50 +1077,8 @@ namespace FairyGUI
 					if (!item.decoded)
 					{
 						item.decoded = true;
-						string fileName = string.IsNullOrEmpty(item.file) ? (item.id + ".png") : item.file;
-						string filePath = _assetNamePrefix + Path.GetFileNameWithoutExtension(fileName);
-						string ext = Path.GetExtension(fileName);
+						LoadAtlas(item);
 
-						Texture2D tex;
-						if (_resBundle != null)
-						{
-#if UNITY_5
-							tex = _resBundle.LoadAsset<Texture2D>(filePath);
-#else
-							tex = (Texture2D)_resBundle.Load(filePath, typeof(Texture2D));
-#endif
-						}
-						else
-							tex = (Texture2D)_loadFunc(filePath, ext, typeof(Texture2D));
-						if (tex == null)
-						{
-							Debug.LogWarning("FairyGUI: texture '" + fileName + "' not found in " + this.name);
-							item.texture = NTexture.Empty;
-						}
-						else
-						{
-							if (tex.mipmapCount > 1)
-								Debug.LogWarning("FairyGUI: texture '" + fileName + "' in " + this.name + " is mipmaps enabled.");
-							item.texture = new NTexture(tex, (float)tex.width / item.width, (float)tex.height / item.height);
-							item.texture.storedODisk = _resBundle == null;
-
-							filePath = filePath + "!a";
-							if (_resBundle != null)
-							{
-#if UNITY_5
-								tex = _resBundle.LoadAsset<Texture2D>(filePath);
-#else
-								tex = (Texture2D)_resBundle.Load(filePath, typeof(Texture2D));
-#endif
-							}
-							else
-								tex = (Texture2D)_loadFunc(filePath, ext, typeof(Texture2D));
-							if (tex != null)
-							{
-								item.texture.alphaTexture = new NTexture(tex);
-								item.texture.alphaTexture.storedODisk = _resBundle == null;
-							}
-						}
 					}
 					return item.texture;
 
@@ -878,18 +1086,7 @@ namespace FairyGUI
 					if (!item.decoded)
 					{
 						item.decoded = true;
-						string fileName = _assetNamePrefix + Path.GetFileNameWithoutExtension(item.file);
-						string ext = Path.GetExtension(item.file);
-						if (_resBundle != null)
-						{
-#if UNITY_5
-							item.audioClip = _resBundle.LoadAsset<AudioClip>(fileName);
-#else
-							item.audioClip = (AudioClip)_resBundle.Load(fileName, typeof(AudioClip));
-#endif
-						}
-						else
-							item.audioClip = (AudioClip)_loadFunc(fileName, ext, typeof(AudioClip));
+						LoadSound(item);
 					}
 					return item.audioClip;
 
@@ -913,15 +1110,12 @@ namespace FairyGUI
 					if (!item.decoded)
 					{
 						item.decoded = true;
-						string str = _descPack[item.id + ".xml"];
-						XML xml = new XML(str);
-						if (_stringsSource != null)
-						{
-							Dictionary<string, string> strings;
-							if (_stringsSource.TryGetValue(this.id + item.id, out strings))
-								TranslateComponent(xml, strings);
-						}
-						item.componentData = xml;
+						LoadComponent(item);
+					}
+					if (!_loadingPackage && item.displayList == null)
+					{
+						LoadComponentChildren(item);
+						TranslateComponent(item);
 					}
 					return item.componentData;
 
@@ -935,23 +1129,152 @@ namespace FairyGUI
 			}
 		}
 
-		void TranslateComponent(XML xml, Dictionary<string, string> strings)
+		void LoadAtlas(PackageItem item)
 		{
-			XML listNode = xml.GetNode("displayList");
-			if (listNode == null)
+			string fileName = string.IsNullOrEmpty(item.file) ? (item.id + ".png") : item.file;
+			string filePath = _assetNamePrefix + Path.GetFileNameWithoutExtension(fileName);
+			string ext = Path.GetExtension(fileName);
+
+			Texture2D tex;
+			if (_resBundle != null)
+			{
+#if UNITY_5
+				tex = _resBundle.LoadAsset<Texture2D>(filePath);
+#else
+				tex = (Texture2D)_resBundle.Load(filePath, typeof(Texture2D));
+#endif
+			}
+			else
+				tex = (Texture2D)_loadFunc(filePath, ext, typeof(Texture2D));
+			if (tex == null)
+			{
+				Debug.LogWarning("FairyGUI: texture '" + fileName + "' not found in " + this.name);
+				item.texture = NTexture.Empty;
+			}
+			else
+			{
+				if (tex.mipmapCount > 1)
+					Debug.LogWarning("FairyGUI: texture '" + fileName + "' in " + this.name + " is mipmaps enabled.");
+				item.texture = new NTexture(tex, (float)tex.width / item.width, (float)tex.height / item.height);
+				item.texture.storedODisk = _resBundle == null;
+
+				filePath = filePath + "!a";
+				if (_resBundle != null)
+				{
+#if UNITY_5
+					tex = _resBundle.LoadAsset<Texture2D>(filePath);
+#else
+					tex = (Texture2D)_resBundle.Load(filePath, typeof(Texture2D));
+#endif
+				}
+				else
+					tex = (Texture2D)_loadFunc(filePath, ext, typeof(Texture2D));
+				if (tex != null)
+				{
+					item.texture.alphaTexture = new NTexture(tex);
+					item.texture.alphaTexture.storedODisk = _resBundle == null;
+				}
+			}
+		}
+
+		void LoadSound(PackageItem item)
+		{
+			string fileName = _assetNamePrefix + Path.GetFileNameWithoutExtension(item.file);
+			string ext = Path.GetExtension(item.file);
+			if (_resBundle != null)
+			{
+#if UNITY_5
+				item.audioClip = _resBundle.LoadAsset<AudioClip>(fileName);
+#else
+				item.audioClip = (AudioClip)_resBundle.Load(fileName, typeof(AudioClip));
+#endif
+			}
+			else
+				item.audioClip = (AudioClip)_loadFunc(fileName, ext, typeof(AudioClip));
+		}
+
+		void LoadComponent(PackageItem item)
+		{
+			string str = _descPack[item.id + ".xml"];
+			item.componentData = new XML(str);
+		}
+
+		void LoadComponentChildren(PackageItem item)
+		{
+			XML listNode = item.componentData.GetNode("displayList");
+			if (listNode != null)
+			{
+				XMLList col = listNode.Elements();
+				int dcnt = col.Count;
+				item.displayList = new DisplayListItem[dcnt];
+				DisplayListItem di;
+				for (int i = 0; i < dcnt; i++)
+				{
+					XML cxml = col[i];
+
+					string src = cxml.GetAttribute("src");
+					if (src != null)
+					{
+						string pkgId = cxml.GetAttribute("pkg");
+						UIPackage pkg;
+						if (pkgId != null && pkgId != item.owner.id)
+							pkg = UIPackage.GetById(pkgId);
+						else
+							pkg = item.owner;
+
+						PackageItem pi = pkg != null ? pkg.GetItem(src) : null;
+						if (pi != null)
+							di = new DisplayListItem(pi, null);
+						else
+							di = new DisplayListItem(null, cxml.name);
+					}
+					else
+					{
+						if (cxml.name == "text" && cxml.GetAttributeBool("input", false))
+							di = new DisplayListItem(null, "inputtext");
+						else
+							di = new DisplayListItem(null, cxml.name);
+					}
+
+					di.desc = cxml;
+					item.displayList[i] = di;
+				}
+			}
+			else
+				item.displayList = new DisplayListItem[0];
+		}
+
+		void TranslateComponent(PackageItem item)
+		{
+			if (_stringsSource == null)
 				return;
 
-			XMLList col = listNode.Elements();
+			Dictionary<string, string> strings;
+			if (!_stringsSource.TryGetValue(this.id + item.id, out strings))
+				return;
 
 			string ename, elementId, value;
-			foreach (XML cxml in col)
+			XML cxml, dxml;
+			int dcnt = item.displayList.Length;
+			for (int i = 0; i < dcnt; i++)
 			{
+				cxml = item.displayList[i].desc;
 				ename = cxml.name;
 				elementId = cxml.GetAttribute("id");
 				if (cxml.HasAttribute("tooltips"))
 				{
 					if (strings.TryGetValue(elementId + "-tips", out value))
 						cxml.SetAttribute("tooltips", value);
+				}
+
+				dxml = cxml.GetNode("gearText");
+				if (dxml != null)
+				{
+					if (strings.TryGetValue(elementId + "-texts", out value))
+						dxml.SetAttribute("values", value);
+
+					if (strings.TryGetValue(elementId + "-texts_def", out value))
+						dxml.SetAttribute("default", value);
 				}
 
 				if (ename == "text" || ename == "richtext")
@@ -963,51 +1286,51 @@ namespace FairyGUI
 				}
 				else if (ename == "list")
 				{
-					XMLList items = cxml.Elements("item");
+					XMLList.Enumerator et = cxml.GetEnumerator("item");
 					int j = 0;
-					foreach (XML exml in items)
+					while (et.MoveNext())
 					{
 						if (strings.TryGetValue(elementId + "-" + j, out value))
-							exml.SetAttribute("title", value);
+							et.Current.SetAttribute("title", value);
 						j++;
 					}
 				}
 				else if (ename == "component")
 				{
-					XML dxml = cxml.GetNode("Button");
+					dxml = cxml.GetNode("Button");
 					if (dxml != null)
 					{
 						if (strings.TryGetValue(elementId, out value))
 							dxml.SetAttribute("title", value);
 						if (strings.TryGetValue(elementId + "-0", out value))
 							dxml.SetAttribute("selectedTitle", value);
+						continue;
 					}
-					else
-					{
-						dxml = cxml.GetNode("Label");
-						if (dxml != null)
-						{
-							if (strings.TryGetValue(elementId, out value))
-								dxml.SetAttribute("title", value);
-						}
-						else
-						{
-							dxml = cxml.GetNode("ComboBox");
-							if (dxml != null)
-							{
-								if (strings.TryGetValue(elementId, out value))
-									dxml.SetAttribute("title", value);
 
-								XMLList items = dxml.Elements("item");
-								int j = 0;
-								foreach (XML exml in items)
-								{
-									if (strings.TryGetValue(elementId + "-" + j, out value))
-										exml.SetAttribute("title", value);
-									j++;
-								}
-							}
+					dxml = cxml.GetNode("Label");
+					if (dxml != null)
+					{
+						if (strings.TryGetValue(elementId, out value))
+							dxml.SetAttribute("title", value);
+						continue;
+					}
+
+					dxml = cxml.GetNode("ComboBox");
+					if (dxml != null)
+					{
+						if (strings.TryGetValue(elementId, out value))
+							dxml.SetAttribute("title", value);
+
+						XMLList.Enumerator et = dxml.GetEnumerator("item");
+						int j = 0;
+						while (et.MoveNext())
+						{
+							if (strings.TryGetValue(elementId + "-" + j, out value))
+								et.Current.SetAttribute("title", value);
+							j++;
 						}
+
+						continue;
 					}
 				}
 			}
@@ -1072,20 +1395,33 @@ namespace FairyGUI
 			int frameCount = xml.GetAttributeInt("frameCount");
 			item.frames = new MovieClip.Frame[frameCount];
 
-			XMLList frameNodes = xml.GetNode("frames").Elements();
-
 			int i = 0;
-			foreach (XML frameNode in frameNodes)
+			string spriteId;
+			XML frameNode;
+			MovieClip.Frame frame;
+			AtlasSprite sprite;
+
+			XMLList.Enumerator et = xml.GetNode("frames").GetEnumerator();
+			while (et.MoveNext())
 			{
-				MovieClip.Frame frame = new MovieClip.Frame();
+				frameNode = et.Current;
+				frame = new MovieClip.Frame();
+
 				arr = frameNode.GetAttributeArray("rect");
 				frame.rect = new Rect(int.Parse(arr[0]), int.Parse(arr[1]), int.Parse(arr[2]), int.Parse(arr[3]));
 				str = frameNode.GetAttribute("addDelay");
 				if (str != null)
 					frame.addDelay = float.Parse(str) / 1000f;
 
-				AtlasSprite sprite;
-				if (_sprites.TryGetValue(item.id + "_" + i, out sprite))
+				str = frameNode.GetAttribute("sprite");
+				if (str != null)
+					spriteId = item.id + "_" + str;
+				else if (frame.rect.width != 0)
+					spriteId = item.id + "_" + i;
+				else
+					spriteId = null;
+
+				if (spriteId != null && _sprites.TryGetValue(spriteId, out sprite))
 				{
 					PackageItem atlasItem = _itemsById[sprite.atlas];
 					if (atlasItem != null)
@@ -1118,6 +1454,8 @@ namespace FairyGUI
 			int xadvance = 0;
 			bool resizable = false;
 			bool canTint = false;
+			bool hasFullChannel = false;
+			int lineHeight = 0;
 			BitmapFont.BMGlyph bg = null;
 
 			char[] splitter0 = new char[] { ' ' };
@@ -1135,7 +1473,8 @@ namespace FairyGUI
 				for (int j = 1; j < arr2.Length; j++)
 				{
 					string[] arr3 = arr2[j].Split(splitter1, StringSplitOptions.RemoveEmptyEntries);
-					kv[arr3[0]] = arr3[1];
+					if (arr3.Length >= 2)
+						kv[arr3[0]] = arr3[1];
 				}
 
 				str = arr2[0];
@@ -1160,15 +1499,17 @@ namespace FairyGUI
 					if (kv.TryGetValue("chnl", out str))
 					{
 						bg.channel = int.Parse(str);
-						if (bg.channel == 15)
-							bg.channel = 4;
-						else if (bg.channel == 1)
+						if (bg.channel == 1)
 							bg.channel = 3;
 						else if (bg.channel == 2)
 							bg.channel = 2;
-						else
+						else if (bg.channel == 3)
 							bg.channel = 1;
+						else
+							hasFullChannel = true;
 					}
+					else
+						hasFullChannel = true;
 
 					if (!ttf)
 					{
@@ -1177,7 +1518,7 @@ namespace FairyGUI
 							PackageItem charImg;
 							if (_itemsById.TryGetValue(str, out charImg))
 							{
-								charImg.Load();
+								GetItemAsset(charImg);
 								bg.uvRect = charImg.texture.uvRect;
 								if (mainTexture == null)
 									mainTexture = charImg.texture.root;
@@ -1194,7 +1535,7 @@ namespace FairyGUI
 					}
 
 					if (ttf)
-						bg.lineHeight = size;
+						bg.lineHeight = lineHeight;
 					else
 					{
 						if (bg.advance == 0)
@@ -1234,11 +1575,16 @@ namespace FairyGUI
 						resizable = str == "true";
 					if (kv.TryGetValue("colored", out str))
 						canTint = str == "true";
+
+					if (size == 0)
+						size = lineHeight;
+					else if (lineHeight == 0)
+						lineHeight = size;
 				}
 				else if (str == "common")
 				{
-					if (size == 0 && kv.TryGetValue("lineHeight", out str))
-						size = int.Parse(str);
+					if (kv.TryGetValue("lineHeight", out str))
+						lineHeight = int.Parse(str);
 					if (kv.TryGetValue("xadvance", out str))
 						xadvance = int.Parse(str);
 				}
@@ -1252,7 +1598,7 @@ namespace FairyGUI
 			font.size = size;
 			font.resizable = resizable;
 			font.mainTexture = mainTexture;
-			if (!ttf)
+			if (!ttf || hasFullChannel)
 				font.shader = ShaderConfig.imageShader;
 		}
 	}
